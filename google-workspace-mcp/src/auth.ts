@@ -4,7 +4,7 @@
  */
 
 import { google } from "googleapis";
-import type { OAuth2Client } from "google-auth-library";
+import { type OAuth2Client, CodeChallengeMethod } from "google-auth-library";
 import * as fs from "fs";
 import * as http from "http";
 import * as crypto from "crypto";
@@ -94,6 +94,7 @@ function startLocalServer(
   oauth2Client: OAuth2Client,
   credentials: OAuthCredentials,
   expectedState: string,
+  codeVerifier: string,
   resolve: (value: GoogleAuth) => void,
   reject: (reason?: Error) => void
 ): http.Server {
@@ -122,7 +123,10 @@ function startLocalServer(
       }
 
       if (code) {
-        const { tokens } = await oauth2Client.getToken(code);
+        const { tokens } = await oauth2Client.getToken({
+          code: code,
+          codeVerifier: codeVerifier,
+        });
         oauth2Client.setCredentials(tokens);
         saveCredentials(oauth2Client, credentials);
 
@@ -180,12 +184,21 @@ async function authenticateOAuth(credentials: OAuthCredentials): Promise<GoogleA
   // Generate cryptographically secure random state for CSRF protection
   const state = crypto.randomBytes(32).toString("hex");
 
-  // Generate auth URL with state parameter
+  // Generate PKCE code verifier and challenge for Authorization Code Interception protection
+  const codeVerifier = crypto.randomBytes(32).toString("base64url");
+  const codeChallenge = crypto
+    .createHash("sha256")
+    .update(codeVerifier)
+    .digest("base64url");
+
+  // Generate auth URL with state parameter and PKCE
   const authUrl = oauth2Client.generateAuthUrl({
     access_type: "offline",
     scope: config.scopes,
     prompt: "consent",
     state: state,
+    code_challenge: codeChallenge,
+    code_challenge_method: CodeChallengeMethod.S256,
   });
 
   logger.info("Authorization required - please visit the URL to authorize");
@@ -196,7 +209,7 @@ async function authenticateOAuth(credentials: OAuthCredentials): Promise<GoogleA
 
   // Start local server and wait for callback
   return new Promise((resolve, reject) => {
-    const server = startLocalServer(oauth2Client, credentials, state, resolve, reject);
+    const server = startLocalServer(oauth2Client, credentials, state, codeVerifier, resolve, reject);
     server.listen(config.oauthPort, () => {
       logger.info(`OAuth callback server listening on port ${config.oauthPort}`);
     });
