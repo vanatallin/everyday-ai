@@ -7,7 +7,7 @@ import { google } from "googleapis";
 import type { docs_v1 } from "googleapis";
 
 import { logger } from "./logger.js";
-import type { GoogleAuth, GoogleDoc, CreateDocParams } from "./types.js";
+import type { GoogleAuth, GoogleDoc, CreateDocParams, DocContent, TableRow } from "./types.js";
 
 export class GoogleDocsService {
   private docs: docs_v1.Docs;
@@ -291,7 +291,7 @@ export class GoogleDocsService {
   }
 
   /**
-   * Helper: Extract plain text from document
+   * Helper: Extract plain text from document (includes tables as markdown)
    */
   private extractTextFromDoc(doc: GoogleDoc): string {
     if (!doc.body?.content) return "";
@@ -305,6 +305,75 @@ export class GoogleDocsService {
             text += paragraphElement.textRun.content;
           }
         }
+      } else if (element.table) {
+        text += this.extractTableAsMarkdown(element.table);
+      }
+    }
+
+    return text;
+  }
+
+  /**
+   * Helper: Extract table content as markdown table
+   */
+  private extractTableAsMarkdown(table: {
+    rows?: number;
+    columns?: number;
+    tableRows?: TableRow[];
+  }): string {
+    if (!table.tableRows || table.tableRows.length === 0) return "";
+
+    const rows: string[][] = [];
+
+    for (const tableRow of table.tableRows) {
+      const rowCells: string[] = [];
+      if (tableRow.tableCells) {
+        for (const cell of tableRow.tableCells) {
+          const cellText = this.extractTextFromContent(cell.content || []);
+          // Clean up cell text: trim and replace newlines with spaces
+          rowCells.push(cellText.trim().replace(/\n/g, " "));
+        }
+      }
+      rows.push(rowCells);
+    }
+
+    if (rows.length === 0) return "";
+
+    // Build markdown table
+    let markdown = "\n";
+
+    // First row as header
+    const headerRow = rows[0];
+    markdown += "| " + headerRow.join(" | ") + " |\n";
+
+    // Header separator
+    markdown += "| " + headerRow.map(() => "---").join(" | ") + " |\n";
+
+    // Data rows (skip first row since it's the header)
+    for (let i = 1; i < rows.length; i++) {
+      markdown += "| " + rows[i].join(" | ") + " |\n";
+    }
+
+    markdown += "\n";
+    return markdown;
+  }
+
+  /**
+   * Helper: Recursively extract text from DocContent array (used for table cells)
+   */
+  private extractTextFromContent(content: DocContent[]): string {
+    let text = "";
+
+    for (const element of content) {
+      if (element.paragraph?.elements) {
+        for (const paragraphElement of element.paragraph.elements) {
+          if (paragraphElement.textRun?.content) {
+            text += paragraphElement.textRun.content;
+          }
+        }
+      } else if (element.table) {
+        // Handle nested tables recursively
+        text += this.extractTableAsMarkdown(element.table);
       }
     }
 

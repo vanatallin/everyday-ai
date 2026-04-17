@@ -450,7 +450,7 @@ export const tools: Tool[] = [
   {
     name: "get_doc",
     description:
-      "Get the content of a Google Doc as plain text.",
+      "Get the content of a Google Doc. Returns text content with tables formatted as markdown tables.",
     inputSchema: {
       type: "object" as const,
       properties: {
