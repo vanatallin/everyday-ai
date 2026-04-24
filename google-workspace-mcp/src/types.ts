@@ -243,12 +243,35 @@ export interface LimitInput {
 // Google Docs Types
 // ============================================================================
 
+export interface DocumentTab {
+  tabId: string;
+  title: string;
+  body?: {
+    content?: DocContent[];
+  };
+}
+
+export interface DocTab {
+  tabProperties?: {
+    tabId?: string;
+    title?: string;
+    index?: number;
+  };
+  documentTab?: {
+    body?: {
+      content?: DocContent[];
+    };
+  };
+  childTabs?: DocTab[];
+}
+
 export interface GoogleDoc {
   documentId: string;
   title: string;
   body?: {
     content?: DocContent[];
   };
+  tabs?: DocTab[];
   revisionId?: string;
 }
 

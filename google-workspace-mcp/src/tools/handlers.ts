@@ -716,14 +716,28 @@ export async function handleSearchDocs(args: unknown): Promise<ToolResponse> {
 export async function handleGetDoc(args: unknown): Promise<ToolResponse> {
   return withDocsAuth(async (service) => {
     const { document_id } = validateInput(GetDocSchema, args);
-    const doc = await service.getDocument(document_id);
-    const text = await service.getDocumentText(document_id);
+    const docWithTabs = await service.getDocumentWithTabs(document_id);
+
+    let content: string;
+    let tabInfo = "";
+
+    if (docWithTabs.tabs.length === 1) {
+      // Single tab - simple format
+      content = docWithTabs.tabs[0].content || "(Empty document)";
+    } else {
+      // Multiple tabs - show tab structure
+      tabInfo = `- Tabs: ${docWithTabs.tabs.length} (${docWithTabs.tabs.map(t => t.title).join(", ")})\n`;
+      content = docWithTabs.tabs
+        .map((tab) => `## ${tab.title}\n\n${tab.content || "(Empty tab)"}`)
+        .join("\n\n---\n\n");
+    }
 
     return createSuccessResponse(
-      `**Document: ${doc.title}**\n\n` +
-        `- ID: \`${doc.documentId}\`\n` +
-        `- URL: ${getDocumentUrl(doc.documentId)}\n\n` +
-        `---\n\n**Content:**\n\n${text || "(Empty document)"}`
+      `**Document: ${docWithTabs.title}**\n\n` +
+        `- ID: \`${document_id}\`\n` +
+        tabInfo +
+        `- URL: ${getDocumentUrl(document_id)}\n\n` +
+        `---\n\n${content}`
     );
   }) as Promise<ToolResponse>;
 }
