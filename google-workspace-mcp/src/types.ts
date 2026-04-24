@@ -330,6 +330,21 @@ export interface GetDocParams {
   document_id: string;
 }
 
+export interface DocComment {
+  id: string;
+  author: string;
+  content: string;
+  createdTime: string;
+  resolved: boolean;
+  quotedText?: string;
+  replies: Array<{
+    id: string;
+    author: string;
+    content: string;
+    createdTime: string;
+  }>;
+}
+
 // ============================================================================
 // Gmail Types
 // ============================================================================

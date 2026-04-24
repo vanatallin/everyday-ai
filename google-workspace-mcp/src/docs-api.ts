@@ -7,7 +7,7 @@ import { google } from "googleapis";
 import type { docs_v1 } from "googleapis";
 
 import { logger } from "./logger.js";
-import type { GoogleAuth, GoogleDoc, CreateDocParams, DocContent, TableRow, DocTab } from "./types.js";
+import type { GoogleAuth, GoogleDoc, CreateDocParams, DocContent, TableRow, DocTab, DocComment } from "./types.js";
 
 export class GoogleDocsService {
   private docs: docs_v1.Docs;
@@ -266,6 +266,41 @@ export class GoogleDocsService {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       throw new Error(`Failed to get document tabs: ${message}`);
+    }
+  }
+
+  /**
+   * Get comments on a document
+   */
+  async getDocumentComments(documentId: string): Promise<DocComment[]> {
+    try {
+      logger.debug(`Getting comments for document: ${documentId}`);
+
+      const response = await this.drive.comments.list({
+        fileId: documentId,
+        fields: "comments(id,author,content,createdTime,resolved,quotedFileContent,replies)",
+        includeDeleted: false,
+      });
+
+      const comments = response.data.comments || [];
+
+      return comments.map((comment) => ({
+        id: comment.id || "",
+        author: comment.author?.displayName || "Unknown",
+        content: comment.content || "",
+        createdTime: comment.createdTime || "",
+        resolved: comment.resolved || false,
+        quotedText: comment.quotedFileContent?.value || undefined,
+        replies: (comment.replies || []).map((reply) => ({
+          id: reply.id || "",
+          author: reply.author?.displayName || "Unknown",
+          content: reply.content || "",
+          createdTime: reply.createdTime || "",
+        })),
+      }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to get document comments: ${message}`);
     }
   }
 
