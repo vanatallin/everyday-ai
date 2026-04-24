@@ -527,4 +527,60 @@ export const tools: Tool[] = [
       required: ["document_id", "search_text", "replace_text"],
     },
   },
+
+  // =========================================================================
+  // Google Slides Tools
+  // =========================================================================
+  {
+    name: "list_presentations",
+    description:
+      "List recent Google Slides presentations from your Drive, sorted by last modified.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        limit: {
+          type: "number",
+          description: "Maximum number of presentations to return (default: 10, max: 50)",
+        },
+      },
+    },
+  },
+  {
+    name: "search_presentations",
+    description:
+      "Search for Google Slides presentations by name.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        query: {
+          type: "string",
+          description: "Search query to find presentations by name",
+        },
+        limit: {
+          type: "number",
+          description: "Maximum number of presentations to return (default: 10, max: 50)",
+        },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "get_presentation",
+    description:
+      "Get the content of a Google Slides presentation. Returns slide text, speaker notes, and optionally downloads images for visual analysis.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        presentation_id: {
+          type: "string",
+          description: "The Google Slides presentation ID",
+        },
+        include_images: {
+          type: "boolean",
+          description: "If true, downloads and includes base64-encoded image data for visual analysis (default: false). Note: This increases response size significantly.",
+        },
+      },
+      required: ["presentation_id"],
+    },
+  },
 ];
