@@ -5,12 +5,12 @@ MCP (Model Context Protocol) for an AI-powered personal assistant: **Google Serv
 ## Overview
 
 This repository contains:
-- **google-workspace-mcp/** — subfolder with the Google Service MCP (Gmail, Calendar, Meet, Docs). Build and run from there. See [google-workspace-mcp/README.md](google-workspace-mcp/README.md) for detailed features, tools, and troubleshooting.
+- **google-workspace-mcp/** — subfolder with the Google Service MCP (Gmail, Calendar, Meet, Docs, Slides, Sheets). Build and run from there. See [google-workspace-mcp/README.md](google-workspace-mcp/README.md) for detailed features, tools, and troubleshooting.
 - **mcp-servers-config.json** — Cursor MCP config (Google + Slack + Jira + GitHub)
 
 | Service | Description |
 |---------|-------------|
-| **Google Service** | Gmail, Calendar, Meet, Google Docs integration |
+| **Google Service** | Gmail, Calendar, Meet, Docs, Slides, Sheets integration |
 | **Slack** | Slack messaging and channels |
 | **Atlassian (Jira)** | Jira issue tracking |
 | **GitHub** | GitHub repositories and issues |
@@ -41,6 +41,8 @@ npm run build
    - [Google Drive API](https://console.cloud.google.com/apis/library/drive.googleapis.com)
    - [Gmail API](https://console.cloud.google.com/apis/library/gmail.googleapis.com)
    - [Google Docs API](https://console.cloud.google.com/apis/library/docs.googleapis.com)
+   - [Google Slides API](https://console.cloud.google.com/apis/library/slides.googleapis.com)
+   - [Google Sheets API](https://console.cloud.google.com/apis/library/sheets.googleapis.com)
 4. Go to **APIs & Services** → **Credentials**
 5. Click **Create Credentials** → **OAuth client ID**
 6. Select **Desktop app**
@@ -203,6 +205,8 @@ Once configured, you can use natural language to interact with these services:
 - "Show my upcoming meetings"
 - "Send an email to john@example.com about the project update"
 - "Create a Google Doc called 'Meeting Notes'"
+- "List my recent spreadsheets"
+- "Read data from my Budget spreadsheet"
 
 **Slack:**
 - "Send a message to #general channel"
@@ -233,7 +237,7 @@ Google Service MCP is in the **google-workspace-mcp** subfolder. No git clone of
 
 ```
 everyday-ai/                          ← repo root
-├── google-workspace-mcp/             ← Google MCP (Meet, Calendar, Gmail, Docs)
+├── google-workspace-mcp/             ← Google MCP (Meet, Calendar, Gmail, Docs, Slides, Sheets)
 │   ├── src/
 │   ├── dist/                         # Build output (npm run build from inside this folder)
 │   │   └── index.js                  # ← Cursor runs this for google-service

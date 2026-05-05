@@ -265,6 +265,47 @@ export const CreateSpreadsheetSchema = z.object({
   title: z.string().min(1, "Title is required"),
 });
 
+// ============================================================================
+// Google Drive Schemas
+// ============================================================================
+
+/**
+ * Schema for list_drive_files tool
+ */
+export const ListDriveFilesSchema = z.object({
+  max_results: z.number().int().min(1).max(100).optional().default(10),
+  file_type: z
+    .enum(["all", "document", "spreadsheet", "presentation", "pdf", "image", "folder"])
+    .optional()
+    .default("all"),
+});
+
+/**
+ * Schema for search_drive_files tool
+ */
+export const SearchDriveFilesSchema = z.object({
+  query: z.string().min(1, "Search query is required"),
+  max_results: z.number().int().min(1).max(100).optional().default(10),
+  file_type: z
+    .enum(["all", "document", "spreadsheet", "presentation", "pdf", "image", "folder"])
+    .optional()
+    .default("all"),
+});
+
+/**
+ * Schema for get_drive_file tool
+ */
+export const GetDriveFileSchema = z.object({
+  file_id: z.string().min(1, "File ID is required"),
+});
+
+/**
+ * Schema for download_drive_file tool
+ */
+export const DownloadDriveFileSchema = z.object({
+  file_id: z.string().min(1, "File ID is required"),
+});
+
 /**
  * Validate and parse input with a schema
  * Returns the validated data or throws a formatted error

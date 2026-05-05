@@ -9,6 +9,7 @@ import { GmailService, getHeader, getMessageBody } from "../gmail-api.js";
 import { GoogleDocsService, getDocumentUrl } from "../docs-api.js";
 import { GoogleSlidesService, getPresentationUrl } from "../slides-api.js";
 import { GoogleSheetsService, getSpreadsheetUrl } from "../sheets-api.js";
+import { GoogleDriveService, getFileType, formatFileSize } from "../drive-api.js";
 import { logger } from "../logger.js";
 import {
   formatDate,
@@ -50,6 +51,10 @@ import {
   UpdateCellsSchema,
   AppendRowsSchema,
   CreateSpreadsheetSchema,
+  ListDriveFilesSchema,
+  SearchDriveFilesSchema,
+  GetDriveFileSchema,
+  DownloadDriveFileSchema,
 } from "../schemas.js";
 import type { ToolResponse, GoogleAuth } from "../types.js";
 
@@ -59,6 +64,7 @@ let gmailService: GmailService | null = null;
 let docsService: GoogleDocsService | null = null;
 let slidesService: GoogleSlidesService | null = null;
 let sheetsService: GoogleSheetsService | null = null;
+let driveService: GoogleDriveService | null = null;
 let authInstance: GoogleAuth | null = null;
 
 /**
@@ -126,6 +132,16 @@ async function getSheetsService(): Promise<GoogleSheetsService> {
   const auth = await ensureAuth();
   sheetsService = new GoogleSheetsService(auth);
   return sheetsService;
+}
+
+/**
+ * Get Drive service (lazy initialization)
+ */
+async function getDriveService(): Promise<GoogleDriveService> {
+  if (driveService) return driveService;
+  const auth = await ensureAuth();
+  driveService = new GoogleDriveService(auth);
+  return driveService;
 }
 
 /**
@@ -213,6 +229,23 @@ async function withSheetsAuth<T>(
   }
 }
 
+/**
+ * Wrapper for Drive handlers
+ */
+async function withDriveAuth<T>(
+  handler: (service: GoogleDriveService) => Promise<T>
+): Promise<T | ToolResponse> {
+  try {
+    const service = await getDriveService();
+    return await handler(service);
+  } catch (error) {
+    if (error instanceof Error && error.message === "NOT_AUTHENTICATED") {
+      return NOT_AUTHENTICATED_RESPONSE;
+    }
+    throw error;
+  }
+}
+
 // ============================================================================
 // Auth Tool Handlers
 // ============================================================================
@@ -229,8 +262,9 @@ export async function handleAuthenticate(): Promise<ToolResponse> {
     docsService = new GoogleDocsService(authInstance);
     slidesService = new GoogleSlidesService(authInstance);
     sheetsService = new GoogleSheetsService(authInstance);
+    driveService = new GoogleDriveService(authInstance);
     return createSuccessResponse(
-      "✅ Successfully authenticated with Google!\n\nYou can now use Google Meet, Calendar, Gmail, Docs, Slides, and Sheets tools."
+      "✅ Successfully authenticated with Google!\n\nYou can now use Google Meet, Calendar, Gmail, Docs, Slides, Sheets, and Drive tools."
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -1177,6 +1211,142 @@ export async function handleCreateSpreadsheet(args: unknown): Promise<ToolRespon
 }
 
 // ============================================================================
+// Google Drive Tool Handlers
+// ============================================================================
+
+/**
+ * Map file type filter to mimeType
+ */
+function getMimeTypeFilter(fileType: string): string | undefined {
+  const mimeTypes: Record<string, string> = {
+    document: "application/vnd.google-apps.document",
+    spreadsheet: "application/vnd.google-apps.spreadsheet",
+    presentation: "application/vnd.google-apps.presentation",
+    pdf: "application/pdf",
+    folder: "application/vnd.google-apps.folder",
+  };
+
+  if (fileType === "image") {
+    return "image/"; // Partial match handled differently
+  }
+
+  return mimeTypes[fileType];
+}
+
+export async function handleListDriveFiles(args: unknown): Promise<ToolResponse> {
+  return withDriveAuth(async (service) => {
+    const { max_results, file_type } = validateInput(ListDriveFilesSchema, args);
+    const mimeType = file_type !== "all" ? getMimeTypeFilter(file_type) : undefined;
+    const files = await service.listFiles(max_results, mimeType);
+
+    if (files.length === 0) {
+      return createSuccessResponse("No files found in Google Drive.");
+    }
+
+    const formatted = files
+      .map((file, i) => {
+        const modified = new Date(file.modifiedTime).toLocaleString();
+        const size = formatFileSize(file.size);
+        const type = getFileType(file.mimeType);
+        return `**${i + 1}. ${file.name}**
+- Type: ${type}
+- ID: \`${file.id}\`
+- Size: ${size}
+- Modified: ${modified}
+- URL: ${file.webViewLink || "N/A"}`;
+      })
+      .join("\n\n");
+
+    return createSuccessResponse(`**Recent Drive Files (${files.length}):**\n\n${formatted}`);
+  }) as Promise<ToolResponse>;
+}
+
+export async function handleSearchDriveFiles(args: unknown): Promise<ToolResponse> {
+  return withDriveAuth(async (service) => {
+    const { query, max_results, file_type } = validateInput(SearchDriveFilesSchema, args);
+    const mimeType = file_type !== "all" ? getMimeTypeFilter(file_type) : undefined;
+    const files = await service.searchFiles(query, max_results, mimeType);
+
+    if (files.length === 0) {
+      return createSuccessResponse(`No files found matching: "${query}"`);
+    }
+
+    const formatted = files
+      .map((file, i) => {
+        const modified = new Date(file.modifiedTime).toLocaleString();
+        const size = formatFileSize(file.size);
+        const type = getFileType(file.mimeType);
+        return `**${i + 1}. ${file.name}**
+- Type: ${type}
+- ID: \`${file.id}\`
+- Size: ${size}
+- Modified: ${modified}
+- URL: ${file.webViewLink || "N/A"}`;
+      })
+      .join("\n\n");
+
+    return createSuccessResponse(
+      `**Search Results for "${query}" (${files.length} files):**\n\n${formatted}`
+    );
+  }) as Promise<ToolResponse>;
+}
+
+export async function handleGetDriveFile(args: unknown): Promise<ToolResponse> {
+  return withDriveAuth(async (service) => {
+    const { file_id } = validateInput(GetDriveFileSchema, args);
+    const file = await service.getFile(file_id);
+
+    const modified = new Date(file.modifiedTime).toLocaleString();
+    const created = file.createdTime ? new Date(file.createdTime).toLocaleString() : "Unknown";
+    const size = formatFileSize(file.size);
+    const type = getFileType(file.mimeType);
+
+    return createSuccessResponse(
+      `**File: ${file.name}**\n\n` +
+        `- Type: ${type}\n` +
+        `- ID: \`${file.id}\`\n` +
+        `- Size: ${size}\n` +
+        `- Created: ${created}\n` +
+        `- Modified: ${modified}\n` +
+        `- Owners: ${file.owners.join(", ") || "Unknown"}\n` +
+        `- Starred: ${file.starred ? "Yes" : "No"}\n` +
+        `- Description: ${file.description || "None"}\n` +
+        `- URL: ${file.webViewLink || "N/A"}`
+    );
+  }) as Promise<ToolResponse>;
+}
+
+export async function handleDownloadDriveFile(args: unknown): Promise<ToolResponse> {
+  return withDriveAuth(async (service) => {
+    const { file_id } = validateInput(DownloadDriveFileSchema, args);
+    const fileContent = await service.downloadFile(file_id);
+
+    const type = getFileType(fileContent.mimeType);
+    const exportInfo =
+      fileContent.mimeType !== fileContent.exportedMimeType
+        ? `\n- Exported as: ${fileContent.exportedMimeType}`
+        : "";
+
+    // Truncate content if too long
+    const maxLength = 50000;
+    let content = fileContent.content;
+    let truncated = false;
+    if (content.length > maxLength) {
+      content = content.substring(0, maxLength);
+      truncated = true;
+    }
+
+    return createSuccessResponse(
+      `**File: ${fileContent.fileName}**\n` +
+        `- Type: ${type}${exportInfo}\n` +
+        `- ID: \`${fileContent.fileId}\`\n` +
+        (truncated ? `- Note: Content truncated (showing first ${maxLength} characters)\n` : "") +
+        `\n---\n\n${content}`
+    );
+  }) as Promise<ToolResponse>;
+}
+
+// ============================================================================
 // Tool Router
 // ============================================================================
 
@@ -1281,6 +1451,16 @@ export async function handleToolCall(
       return handleAppendRows(args);
     case "create_spreadsheet":
       return handleCreateSpreadsheet(args);
+
+    // Google Drive
+    case "list_drive_files":
+      return handleListDriveFiles(args);
+    case "search_drive_files":
+      return handleSearchDriveFiles(args);
+    case "get_drive_file":
+      return handleGetDriveFile(args);
+    case "download_drive_file":
+      return handleDownloadDriveFile(args);
 
     default:
       return createErrorResponse(`Unknown tool: ${name}`);

@@ -723,4 +723,81 @@ export const tools: Tool[] = [
       required: ["title"],
     },
   },
+
+  // =========================================================================
+  // Google Drive Tools
+  // =========================================================================
+  {
+    name: "list_drive_files",
+    description:
+      "List recent files from Google Drive, sorted by last modified. Can filter by file type.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        max_results: {
+          type: "number",
+          description: "Maximum number of files to return (default: 10, max: 100)",
+        },
+        file_type: {
+          type: "string",
+          enum: ["all", "document", "spreadsheet", "presentation", "pdf", "image", "folder"],
+          description: "Filter by file type (default: all)",
+        },
+      },
+    },
+  },
+  {
+    name: "search_drive_files",
+    description:
+      "Search for files in Google Drive by name or content. Can filter by file type.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        query: {
+          type: "string",
+          description: "Search query to find files by name or content",
+        },
+        max_results: {
+          type: "number",
+          description: "Maximum number of files to return (default: 10, max: 100)",
+        },
+        file_type: {
+          type: "string",
+          enum: ["all", "document", "spreadsheet", "presentation", "pdf", "image", "folder"],
+          description: "Filter by file type (default: all)",
+        },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "get_drive_file",
+    description:
+      "Get metadata about a specific file in Google Drive including name, type, size, and sharing info.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        file_id: {
+          type: "string",
+          description: "The Google Drive file ID",
+        },
+      },
+      required: ["file_id"],
+    },
+  },
+  {
+    name: "download_drive_file",
+    description:
+      "Download the content of a file from Google Drive. For Google Workspace files (Docs, Sheets, Slides), exports to text/CSV format. For other files, downloads the raw content.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        file_id: {
+          type: "string",
+          description: "The Google Drive file ID",
+        },
+      },
+      required: ["file_id"],
+    },
+  },
 ];

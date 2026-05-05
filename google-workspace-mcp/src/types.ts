@@ -466,3 +466,29 @@ export interface CellData {
   range: string;
   values: string[][];
 }
+
+// ============================================================================
+// Google Drive Types
+// ============================================================================
+
+export interface DriveFile {
+  id: string;
+  name: string;
+  mimeType: string;
+  modifiedTime: string;
+  createdTime?: string | null;
+  size?: number;
+  webViewLink?: string | null;
+  iconLink?: string | null;
+  owners: string[];
+  description?: string | null;
+  starred?: boolean | null;
+}
+
+export interface DriveFileContent {
+  fileId: string;
+  fileName: string;
+  mimeType: string;
+  content: string;
+  exportedMimeType: string;
+}
