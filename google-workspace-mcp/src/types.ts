@@ -386,11 +386,21 @@ export interface GetThreadParams {
 // MCP Response Types
 // ============================================================================
 
+export interface TextContent {
+  type: "text";
+  text: string;
+}
+
+export interface ImageContent {
+  type: "image";
+  data: string;
+  mimeType: string;
+}
+
+export type ContentBlock = TextContent | ImageContent;
+
 export interface ToolResponse {
-  content: Array<{
-    type: "text";
-    text: string;
-  }>;
+  content: ContentBlock[];
   isError?: boolean;
   [key: string]: unknown;
 }

@@ -179,6 +179,33 @@ export const CreateCalendarEventSchema = z.object({
   add_meet_link: z.boolean().optional().default(true),
 });
 
+// ============================================================================
+// Google Slides Schemas
+// ============================================================================
+
+/**
+ * Schema for list_presentations tool
+ */
+export const ListPresentationsSchema = z.object({
+  limit: z.number().int().min(1).max(50).optional().default(10),
+});
+
+/**
+ * Schema for search_presentations tool
+ */
+export const SearchPresentationsSchema = z.object({
+  query: z.string().min(1, "Search query is required"),
+  limit: z.number().int().min(1).max(50).optional().default(10),
+});
+
+/**
+ * Schema for get_presentation tool
+ */
+export const GetPresentationSchema = z.object({
+  presentation_id: z.string().min(1, "Presentation ID is required"),
+  include_images: z.boolean().optional().default(false),
+});
+
 /**
  * Validate and parse input with a schema
  * Returns the validated data or throws a formatted error

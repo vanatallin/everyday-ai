@@ -7,6 +7,7 @@ import { authenticate, isAuthenticated, getAuthStatus } from "../auth.js";
 import { GoogleMeetService } from "../meet-api.js";
 import { GmailService, getHeader, getMessageBody } from "../gmail-api.js";
 import { GoogleDocsService, getDocumentUrl } from "../docs-api.js";
+import { GoogleSlidesService, getPresentationUrl } from "../slides-api.js";
 import { logger } from "../logger.js";
 import {
   formatDate,
@@ -38,6 +39,9 @@ import {
   AppendToDocSchema,
   ReplaceInDocSchema,
   CreateCalendarEventSchema,
+  ListPresentationsSchema,
+  SearchPresentationsSchema,
+  GetPresentationSchema,
 } from "../schemas.js";
 import type { ToolResponse, GoogleAuth } from "../types.js";
 
@@ -45,6 +49,7 @@ import type { ToolResponse, GoogleAuth } from "../types.js";
 let meetService: GoogleMeetService | null = null;
 let gmailService: GmailService | null = null;
 let docsService: GoogleDocsService | null = null;
+let slidesService: GoogleSlidesService | null = null;
 let authInstance: GoogleAuth | null = null;
 
 /**
@@ -92,6 +97,16 @@ async function getDocsService(): Promise<GoogleDocsService> {
   const auth = await ensureAuth();
   docsService = new GoogleDocsService(auth);
   return docsService;
+}
+
+/**
+ * Get Slides service (lazy initialization)
+ */
+async function getSlidesService(): Promise<GoogleSlidesService> {
+  if (slidesService) return slidesService;
+  const auth = await ensureAuth();
+  slidesService = new GoogleSlidesService(auth);
+  return slidesService;
 }
 
 /**
@@ -145,6 +160,23 @@ async function withDocsAuth<T>(
   }
 }
 
+/**
+ * Wrapper for Slides handlers
+ */
+async function withSlidesAuth<T>(
+  handler: (service: GoogleSlidesService) => Promise<T>
+): Promise<T | ToolResponse> {
+  try {
+    const service = await getSlidesService();
+    return await handler(service);
+  } catch (error) {
+    if (error instanceof Error && error.message === "NOT_AUTHENTICATED") {
+      return NOT_AUTHENTICATED_RESPONSE;
+    }
+    throw error;
+  }
+}
+
 // ============================================================================
 // Auth Tool Handlers
 // ============================================================================
@@ -159,8 +191,9 @@ export async function handleAuthenticate(): Promise<ToolResponse> {
     meetService = new GoogleMeetService(authInstance);
     gmailService = new GmailService(authInstance);
     docsService = new GoogleDocsService(authInstance);
+    slidesService = new GoogleSlidesService(authInstance);
     return createSuccessResponse(
-      "✅ Successfully authenticated with Google!\n\nYou can now use Google Meet, Calendar, Gmail, and Docs tools."
+      "✅ Successfully authenticated with Google!\n\nYou can now use Google Meet, Calendar, Gmail, Docs, and Slides tools."
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -741,6 +774,164 @@ export async function handleReplaceInDoc(args: unknown): Promise<ToolResponse> {
 }
 
 // ============================================================================
+// Google Slides Tool Handlers
+// ============================================================================
+
+export async function handleListPresentations(args: unknown): Promise<ToolResponse> {
+  return withSlidesAuth(async (service) => {
+    const { limit } = validateInput(ListPresentationsSchema, args);
+    const presentations = await service.listPresentations(limit);
+
+    if (presentations.length === 0) {
+      return createSuccessResponse("No Google Slides presentations found in your Drive.");
+    }
+
+    const formatted = presentations
+      .map((pres, i) => {
+        const modified = new Date(pres.modifiedTime).toLocaleString();
+        return `**${i + 1}. ${pres.name}**
+- ID: \`${pres.id}\`
+- Modified: ${modified}
+- URL: ${getPresentationUrl(pres.id)}`;
+      })
+      .join("\n\n");
+
+    return createSuccessResponse(`**Recent Presentations (${presentations.length}):**\n\n${formatted}`);
+  }) as Promise<ToolResponse>;
+}
+
+export async function handleSearchPresentations(args: unknown): Promise<ToolResponse> {
+  return withSlidesAuth(async (service) => {
+    const { query, limit } = validateInput(SearchPresentationsSchema, args);
+    const presentations = await service.searchPresentations(query, limit);
+
+    if (presentations.length === 0) {
+      return createSuccessResponse(`No presentations found matching: "${query}"`);
+    }
+
+    const formatted = presentations
+      .map((pres, i) => {
+        const modified = new Date(pres.modifiedTime).toLocaleString();
+        return `**${i + 1}. ${pres.name}**
+- ID: \`${pres.id}\`
+- Modified: ${modified}
+- URL: ${getPresentationUrl(pres.id)}`;
+      })
+      .join("\n\n");
+
+    return createSuccessResponse(
+      `**Search Results for "${query}" (${presentations.length} presentations):**\n\n${formatted}`
+    );
+  }) as Promise<ToolResponse>;
+}
+
+export async function handleGetPresentation(args: unknown): Promise<ToolResponse> {
+  return withSlidesAuth(async (service) => {
+    const { presentation_id, include_images } = validateInput(GetPresentationSchema, args);
+    const presentation = await service.getPresentation(presentation_id, {
+      includeImageData: include_images,
+    });
+
+    // Collect all image content blocks for MCP response
+    const imageBlocks: Array<{ type: "image"; data: string; mimeType: string }> = [];
+
+    const slidesContent = presentation.slides
+      .map((slide) => {
+        let content = `## Slide ${slide.slideNumber}\n\n`;
+
+        // Text content
+        content += slide.text || "(No text content)";
+
+        // Images
+        if (slide.images.length > 0) {
+          content += `\n\n**Images (${slide.images.length}):**\n`;
+          slide.images.forEach((img, i) => {
+            content += `- Image ${i + 1}:`;
+            if (img.description) content += ` "${img.description}"`;
+            if (img.width && img.height) content += ` (${Math.round(img.width)}x${Math.round(img.height)})`;
+            if (!include_images) {
+              content += `\n  URL: ${img.contentUrl}\n`;
+            }
+            if (img.sourceUrl) content += `\n  Source: ${img.sourceUrl}`;
+            content += "\n";
+
+            // Add image to content blocks if data was downloaded
+            if (img.base64Data && img.mimeType) {
+              imageBlocks.push({
+                type: "image",
+                data: img.base64Data,
+                mimeType: img.mimeType,
+              });
+            }
+          });
+        }
+
+        // Videos
+        if (slide.videos.length > 0) {
+          content += `\n\n**Videos (${slide.videos.length}):**\n`;
+          slide.videos.forEach((vid, i) => {
+            content += `- Video ${i + 1}: [${vid.source}] ${vid.videoUrl}\n`;
+          });
+        }
+
+        // Charts
+        if (slide.charts.length > 0) {
+          content += `\n\n**Charts (${slide.charts.length}):**\n`;
+          slide.charts.forEach((chart, i) => {
+            content += `- Chart ${i + 1}: ${chart.description}`;
+            if (chart.spreadsheetId) {
+              content += `\n  Linked to Sheets: https://docs.google.com/spreadsheets/d/${chart.spreadsheetId}`;
+            }
+            content += "\n";
+          });
+        }
+
+        // Non-text shapes
+        if (slide.shapes.length > 0) {
+          content += `\n\n**Shapes:** ${slide.shapes.join(", ")}`;
+        }
+
+        // Speaker notes
+        if (slide.speakerNotes) {
+          content += `\n\n**Speaker Notes:**\n${slide.speakerNotes}`;
+        }
+
+        return content;
+      })
+      .join("\n\n---\n\n");
+
+    // Summary of media across all slides
+    const totalImages = presentation.slides.reduce((sum, s) => sum + s.images.length, 0);
+    const totalVideos = presentation.slides.reduce((sum, s) => sum + s.videos.length, 0);
+    const totalCharts = presentation.slides.reduce((sum, s) => sum + s.charts.length, 0);
+
+    let mediaSummary = "";
+    if (totalImages > 0 || totalVideos > 0 || totalCharts > 0) {
+      mediaSummary = `- Media: ${totalImages} images, ${totalVideos} videos, ${totalCharts} charts\n`;
+      if (include_images && imageBlocks.length > 0) {
+        mediaSummary += `- Downloaded: ${imageBlocks.length} images for visual analysis\n`;
+      }
+    }
+
+    const textContent =
+      `# ${presentation.title}\n\n` +
+      `- ID: \`${presentation.id}\`\n` +
+      `- Slides: ${presentation.slideCount}\n` +
+      mediaSummary +
+      `- URL: ${getPresentationUrl(presentation.id)}\n\n` +
+      `---\n\n${slidesContent}`;
+
+    // Return text content followed by image content blocks
+    return {
+      content: [
+        { type: "text" as const, text: textContent },
+        ...imageBlocks,
+      ],
+    };
+  }) as Promise<ToolResponse>;
+}
+
+// ============================================================================
 // Tool Router
 // ============================================================================
 
@@ -821,6 +1012,14 @@ export async function handleToolCall(
       return handleAppendToDoc(args);
     case "replace_in_doc":
       return handleReplaceInDoc(args);
+
+    // Google Slides
+    case "list_presentations":
+      return handleListPresentations(args);
+    case "search_presentations":
+      return handleSearchPresentations(args);
+    case "get_presentation":
+      return handleGetPresentation(args);
 
     default:
       return createErrorResponse(`Unknown tool: ${name}`);
