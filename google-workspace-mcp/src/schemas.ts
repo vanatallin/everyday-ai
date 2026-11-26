@@ -331,6 +331,8 @@ export const EditPresentationSchema = z.object({
     z.object({ type: z.literal("add_notes"), slide_id: slideId, text: z.string().min(1) }).strict(),
     z.object({ type: z.literal("link_element"), element_id: slideId, url: z.string().url() }).strict(),
     z.object({ type: z.literal("set_alt_text"), element_id: slideId, title: z.string().optional(), description: z.string().optional() }).strict(),
+    z.object({ type: z.literal("group_elements"), element_ids: z.array(slideId).min(2), group_id: z.string().min(1).optional() }).strict(),
+    z.object({ type: z.literal("ungroup_elements"), group_id: slideId }).strict(),
     z.object({ type: z.literal("z_order"), element_ids: z.array(slideId).min(1), operation: z.enum(["BRING_TO_FRONT", "BRING_FORWARD", "SEND_TO_BACK", "SEND_BACKWARD"]) }).strict(),
     z.object({ type: z.literal("align_elements"), element_ids: z.array(slideId).min(1), alignment: z.enum(["LEFT", "CENTER", "RIGHT", "TOP", "MIDDLE", "BOTTOM"]) }).strict(),
     z.object({ type: z.literal("distribute_elements"), element_ids: z.array(slideId).min(2), axis: z.enum(["HORIZONTAL", "VERTICAL"]) }).strict(),

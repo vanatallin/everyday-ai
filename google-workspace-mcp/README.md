@@ -132,7 +132,7 @@ The Slides tools can create presentations, inspect elements and revisions, add, 
 | Shape | `add_shape` (full Google ShapeType vocabulary), `style_shape`, `transform_element` with `rotation` |
 | Media | `add_image` (public URL or Drive file ID), `style_image`, `set_background` (colour, theme colour or stretched image) |
 | Tables | `add_table` with cell text, header/body fills, cell styles and borders |
-| Structure | `add_notes`, `link_element`, `set_alt_text`, `z_order`, `align_elements`, `distribute_elements` |
+| Structure | `add_notes`, `link_element`, `set_alt_text`, `group_elements`, `ungroup_elements`, `z_order`, `align_elements`, `distribute_elements` |
 
 Text styling covers alignment, vertical anchor, line spacing, space before/after, bullets (including numbered presets), links, strikethrough, small caps, superscript/subscript and background colour. Shapes cover fill colour and alpha, outline colour/weight/alpha/dash and hyperlinks. For card borders, set `outline_color` and optionally `outline_weight` on `add_shape` or `style_shape`.
 

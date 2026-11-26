@@ -91,6 +91,23 @@ test('compiles images, layouts, rich text, tables, backgrounds and layering', ()
   assert.equal(requests.find(r => r.updatePageElementsZOrder).updatePageElementsZOrder.operation, 'BRING_TO_FRONT');
 });
 
+test('groups and ungroups elements', () => {
+  const { operations } = EditPresentationSchema.parse({ presentation_id: 'p', operations: [
+    { type: 'group_elements', element_ids: ['a', 'b'] },
+    { type: 'group_elements', element_ids: ['c', 'd'], group_id: 'my-group' },
+    { type: 'ungroup_elements', group_id: 'my-group' },
+  ] });
+  const { requests, createdIds } = compileSlideEdits(operations);
+  assert.equal(requests[0].groupObjects.childrenObjectIds.length, 2);
+  assert.equal(requests[0].groupObjects.groupObjectId, createdIds[0].objectId);
+  assert.equal(createdIds[0].operation, 0);
+  assert.equal(requests[1].groupObjects.groupObjectId, 'my-group');
+  assert.equal(createdIds[1].objectId, 'my-group');
+  assert.deepEqual(requests[2].ungroupObjects.objectIds, ['my-group']);
+  assert.equal(EditPresentationSchema.safeParse({ presentation_id: 'p', operations: [{ type: 'group_elements', element_ids: ['a'] }] }).success, false);
+  assert.equal(EditPresentationSchema.safeParse({ presentation_id: 'p', operations: [{ type: 'ungroup_elements', group_id: 'g', extra: true }] }).success, false);
+});
+
 test('validates new operation shapes and image sources', () => {
   const parse = operations => EditPresentationSchema.safeParse({ presentation_id: 'p', operations }).success;
   assert.equal(parse([{ type: 'add_image', slide_id: 's', x: 0, y: 0, width: 1, height: 1 }]), false);

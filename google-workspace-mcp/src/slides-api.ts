@@ -344,6 +344,13 @@ export function compileSlideEdits(operations: SlideEditOperation[]): { requests:
         ...(op.title !== undefined ? { title: op.title } : {}),
         ...(op.description !== undefined ? { description: op.description } : {}),
       } }); break;
+      case "group_elements": {
+        const objectId = op.group_id || newObjectId();
+        createdIds.push({ operation, objectId });
+        requests.push({ groupObjects: { groupObjectId: objectId, childrenObjectIds: op.element_ids } });
+        break;
+      }
+      case "ungroup_elements": requests.push({ ungroupObjects: { objectIds: [op.group_id] } }); break;
       case "z_order": requests.push({ updatePageElementsZOrder: { pageElementObjectIds: op.element_ids, operation: op.operation } }); break;
       case "move_element": requests.push({ updatePageElementTransform: { objectId: op.element_id, applyMode: "RELATIVE", transform: { scaleX: 1, scaleY: 1, translateX: op.x, translateY: op.y, unit: "PT" } } }); break;
       case "transform_element": {
