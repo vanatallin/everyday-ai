@@ -49,6 +49,8 @@ import {
   SlidePreviewSchema,
   EditPresentationSchema,
   AddSlideImageSchema,
+  UploadDriveFileSchema,
+  CopySlideSchema,
   ListSpreadsheetsSchema,
   SearchSpreadsheetsSchema,
   GetSpreadsheetSchema,
@@ -880,8 +882,9 @@ export async function handleReplaceInDoc(args: unknown): Promise<ToolResponse> {
 
 export async function handleCreatePresentation(args: unknown): Promise<ToolResponse> {
   return withSlidesAuth(async (service) => {
-    const { title } = validateInput(CreatePresentationSchema, args);
-    return createSuccessResponse(JSON.stringify(await service.createPresentation(title), null, 2));
+    const { title, width, height } = validateInput(CreatePresentationSchema, args);
+    const pageSize = width !== undefined && height !== undefined ? { width, height } : undefined;
+    return createSuccessResponse(JSON.stringify(await service.createPresentation(title, pageSize), null, 2));
   }) as Promise<ToolResponse>;
 }
 
@@ -911,6 +914,20 @@ export async function handleAddSlideImage(args: unknown): Promise<ToolResponse> 
   return withSlidesAuth(async (service) => {
     const input = validateInput(AddSlideImageSchema, args);
     return createSuccessResponse(JSON.stringify(await service.addSlideImage(input), null, 2));
+  }) as Promise<ToolResponse>;
+}
+
+export async function handleUploadDriveFile(args: unknown): Promise<ToolResponse> {
+  return withSlidesAuth(async (service) => {
+    const input = validateInput(UploadDriveFileSchema, args);
+    return createSuccessResponse(JSON.stringify(await service.uploadDriveFile(input), null, 2));
+  }) as Promise<ToolResponse>;
+}
+
+export async function handleCopySlide(args: unknown): Promise<ToolResponse> {
+  return withSlidesAuth(async (service) => {
+    const input = validateInput(CopySlideSchema, args);
+    return createSuccessResponse(JSON.stringify(await service.copySlide(input), null, 2));
   }) as Promise<ToolResponse>;
 }
 
@@ -1323,6 +1340,10 @@ export async function handleToolCall(
       return handleSlidePreview(args);
     case "add_slide_image":
       return handleAddSlideImage(args);
+    case "upload_drive_file":
+      return handleUploadDriveFile(args);
+    case "copy_slide":
+      return handleCopySlide(args);
 
     // Google Sheets
     case "list_spreadsheets":

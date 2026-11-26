@@ -121,9 +121,28 @@ A browser window will open for Google sign-in. After authorizing, a `token.json`
 
 ### Google Slides creation and editing
 
-The Slides tools can create presentations, inspect elements and revisions, add, duplicate, delete or reorder slides, add shapes and text, change text styling or slide backgrounds, move elements, and render slide previews. `edit_presentation` applies a batch atomically. Inspect first and pass its `revisionId` as `revision_id` to prevent overwriting concurrent edits. Slide positions use zero-based indices; the move index refers to the order before the move. Coordinates for edits are in points. Newly created IDs are returned in `createdIds`; duplicated IDs are returned in the API replies. Add content to newly created slides in a subsequent call.
+The Slides tools can create presentations, inspect elements and revisions, add, duplicate, delete or reorder slides, add shapes, text, images and tables, change text and shape styling, set slide backgrounds, add speaker notes, links and alt text, reorder layers, copy slides between decks, and render slide previews. `edit_presentation` applies a batch atomically (operations that need element metadata are resolved first, then sent as one batch). Inspect first and pass its `revisionId` as `revision_id` to prevent overwriting concurrent edits. Slide positions use zero-based indices; the move index refers to the order before the move. Coordinates for edits are in points. Newly created IDs are returned in `createdIds`; duplicated IDs are returned in the API replies. Add content to newly created slides in a subsequent call.
 
-For card borders, set `outline_color` (a `#RRGGBB` color) on `add_shape` or `style_shape`. For example, `{"type":"style_shape","element_id":"card-id","outline_color":"#D9D9D9"}` changes the outline without replacing the fill. Both `fill_color` and `outline_color` may be supplied together.
+#### What `edit_presentation` supports
+
+| Area | Operations |
+| --- | --- |
+| Slides | `add_slide` (with `layout` or `layout_id`), `delete_slide`, `duplicate_slide`, `move_slide`, `copy_slide` |
+| Text | `add_text_box`, `replace_text`, `style_text` (full range or `start_index`/`end_index`), `add_text_box.runs` for per-run rich text |
+| Shape | `add_shape` (full Google ShapeType vocabulary), `style_shape`, `transform_element` with `rotation` |
+| Media | `add_image` (public URL or Drive file ID), `style_image`, `set_background` (colour, theme colour or stretched image) |
+| Tables | `add_table` with cell text, header/body fills, cell styles and borders |
+| Structure | `add_notes`, `link_element`, `set_alt_text`, `z_order`, `align_elements`, `distribute_elements` |
+
+Text styling covers alignment, vertical anchor, line spacing, space before/after, bullets (including numbered presets), links, strikethrough, small caps, superscript/subscript and background colour. Shapes cover fill colour and alpha, outline colour/weight/alpha/dash and hyperlinks. For card borders, set `outline_color` and optionally `outline_weight` on `add_shape` or `style_shape`.
+
+`add_image` accepts either `url` (publicly reachable) or `drive_file_id`. Use `upload_drive_file` with `share_anyone: true` to publish a local file and get a Drive ID/direct URL; this requires the `drive.file` OAuth scope and changes the file's sharing. `add_slide_image` remains the private option for local files when the Apps Script helper is configured.
+
+`copy_slide` / the `copy_slide` operation copies a slide across presentations. When the Apps Script helper is configured, `copy_slide` uses `insertSlide`/`appendSlide`, which preserves text, images, tables, layouts and masters losslessly. Without the helper it recreates shapes, text, tables, lines, groups, videos and images that have a public source URL; images without a source URL and unsupported elements are reported in `warnings`.
+
+#### Known API limitations
+
+Google Slides does not expose some editor features through the REST API or Apps Script. The following cannot be implemented reliably from the MCP server: changing page size after creation (use `create_presentation` `width`/`height`), custom corner radius (use `ROUND_RECTANGLE`), text inset overrides, picture fills on shapes (only slide backgrounds support stretched images), shape shadows/gradients (shadow is read-only), and inserting a dynamic slide-number field.
 
 Existing OAuth users must call `authenticate` with `{"force": true}` and complete consent for the new Slides write scope; the existing token is kept until the new consent succeeds. Restart the server after changing environment configuration. Service accounts can use the Slides editing tools for presentations shared with them, but Google does not support service accounts for Apps Script API execution.
 
@@ -135,6 +154,8 @@ Existing OAuth users must call `authenticate` with `{"force": true}` and complet
 2. Create a standalone project at [script.google.com](https://script.google.com/). Copy `apps-script/PrivateSlideImages.gs` into its editor. In Project Settings enable showing the manifest, then replace `appsscript.json` with `apps-script/appsscript.json` from this repository. Use the same standard Cloud project as your OAuth client (Project Settings → Google Cloud Platform project).
 3. Deploy as an **API executable**, restricted to yourself. Copy the deployment ID, not the project ID. See Google's [execution setup](https://developers.google.com/apps-script/api/how-tos/execute). Workspace policy may require administrator approval.
 4. Set `GOOGLE_SLIDES_IMAGE_SCRIPT_DEPLOYMENT_ID` in the MCP server environment to that deployment ID, and restart the server. Reauthorize with `authenticate` and `{"force":true}` if you haven't granted Slides write access yet.
+
+The same deployment also implements lossless cross-presentation `copy_slide` (function `copySlideFromPresentation`). Set `GOOGLE_SLIDES_SCRIPT_DEPLOYMENT_ID` to use a shared helper deployment; it falls back to `GOOGLE_SLIDES_IMAGE_SCRIPT_DEPLOYMENT_ID`.
 
 The script and OAuth client must share the Cloud project; API execution uses the OAuth user's permissions and is unavailable for service accounts. A failed or missing helper returns an error; there is no public-image fallback. Preview images from Google are temporary access-bearing URLs and are returned as image data, not exposed as links.
 

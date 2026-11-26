@@ -7,28 +7,82 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 const id = { type: "string", minLength: 1 };
 const number = { type: "number" };
+const color = { type: "string", pattern: "^#[0-9a-fA-F]{6}$", description: "Colour as #RRGGBB" };
+const alpha = { type: "number", minimum: 0, maximum: 1 };
 const box = { x: number, y: number, width: { type: "number", exclusiveMinimum: 0 }, height: { type: "number", exclusiveMinimum: 0 } };
+const alignment = { type: "string", enum: ["START", "CENTER", "END", "JUSTIFIED"] };
+const bulletPreset = { type: "string", enum: [
+  "BULLET_DISC_CIRCLE_SQUARE", "BULLET_DIAMONDX_ARROW3D_SQUARE", "BULLET_CHECKBOX",
+  "BULLET_ARROW_DIAMOND_DISC", "BULLET_STAR_CIRCLE_SQUARE", "BULLET_ARROW3D_CIRCLE_SQUARE",
+  "BULLET_LEFTTRIANGLE_DIAMOND_DISC", "BULLET_DIAMONDX_HOLLOWDIAMOND_SQUARE", "BULLET_DIAMOND_CIRCLE_SQUARE",
+  "NUMBERED_DIGIT_ALPHA_ROMAN", "NUMBERED_DIGIT_ALPHA_ROMAN_PARENS", "NUMBERED_DIGIT_NESTED",
+  "NUMBERED_UPPERALPHA_ROMAN", "NUMBERED_UPPERROMAN_UPPERALPHA_DIGIT", "NUMBERED_ZERODIGIT_ALPHA_ROMAN",
+] };
 const style = { type: "object", additionalProperties: false, minProperties: 1, properties: {
-  font_family: id, font_size: { type: "number", exclusiveMinimum: 0 }, color: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" },
+  font_family: id, font_size: { type: "number", exclusiveMinimum: 0 }, color, background_color: color,
   bold: { type: "boolean" }, italic: { type: "boolean" }, underline: { type: "boolean" },
-  align: { type: "string", enum: ["START", "CENTER", "END", "JUSTIFIED"] },
+  strikethrough: { type: "boolean" }, small_caps: { type: "boolean" },
+  baseline_offset: { type: "string", enum: ["NONE", "SUPERSCRIPT", "SUBSCRIPT"] },
+  align: alignment,
+  vertical_anchor: { type: "string", enum: ["TOP", "MIDDLE", "BOTTOM"], description: "Vertical text anchor (shape content alignment)" },
+  line_spacing: { type: "number", exclusiveMinimum: 0, description: "Line spacing percentage, where 100 is normal" },
+  space_before: { type: "number", minimum: 0, description: "Space above a paragraph in points" },
+  space_after: { type: "number", minimum: 0, description: "Space below a paragraph in points" },
+  link_url: { type: "string", format: "uri" },
+  bullets: bulletPreset,
+  remove_bullets: { type: "boolean" },
 } };
+const textRun = { type: "object", additionalProperties: false, properties: { text: { type: "string", minLength: 1 }, style }, required: ["text", "style"] };
+const outline = {
+  outline_color: color,
+  outline_weight: { type: "number", minimum: 0, description: "Outline weight in points" },
+  outline_alpha: alpha,
+  outline_dash_style: { type: "string", enum: ["SOLID", "DOT", "DASH", "LONG_DASH", "LONG_DOT", "DASH_DOT", "LONG_DASH_DOT"] },
+};
+const imageSource = { url: { type: "string", format: "uri" }, drive_file_id: { type: "string", minLength: 1 } };
+const cellStyle = { type: "object", additionalProperties: false, properties: { fill_color: color, text_color: color, bold: { type: "boolean" }, font_size: { type: "number", exclusiveMinimum: 0 }, align: alignment } };
 const operation = (type: string, properties: Record<string, unknown>, required: string[]) => ({
   type: "object", additionalProperties: false, properties: { type: { type: "string", enum: [type] }, ...properties }, required: ["type", ...required],
 });
+const atLeastOne = (...names: string[]) => ({ anyOf: names.map((name) => ({ required: [name] })) });
 const slideOperations = [
-  operation("add_slide", { index: { type: "integer", minimum: 0 } }, []),
+  operation("add_slide", {
+    index: { type: "integer", minimum: 0 },
+    layout: { type: "string", enum: ["BLANK", "TITLE", "TITLE_AND_BODY", "TITLE_AND_TWO_COLUMNS", "TITLE_ONLY", "SECTION_HEADER", "SECTION_TITLE_AND_DESCRIPTION", "ONE_COLUMN_TEXT", "MAIN_POINT", "BIG_NUMBER", "CAPTION_ONLY"] },
+    layout_id: id,
+  }, []),
   operation("delete_slide", { slide_id: id }, ["slide_id"]),
   operation("duplicate_slide", { slide_id: id }, ["slide_id"]),
   operation("move_slide", { slide_id: id, index: { type: "integer", minimum: 0 } }, ["slide_id", "index"]),
-  operation("add_text_box", { slide_id: id, text: id, ...box, style }, ["slide_id", "text", "x", "y", "width", "height"]),
-  operation("add_shape", { slide_id: id, shape: { type: "string", enum: ["RECTANGLE", "ROUND_RECTANGLE", "ELLIPSE", "TRIANGLE"] }, ...box, fill_color: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" }, outline_color: { type: "string", pattern: "^#[0-9a-fA-F]{6}$", description: "Shape outline color as #RRGGBB" } }, ["slide_id", "shape", "x", "y", "width", "height"]),
+  operation("copy_slide", { source_presentation_id: id, source_slide_id: id, index: { type: "integer", minimum: 0 } }, ["source_presentation_id", "source_slide_id"]),
+  operation("add_text_box", { slide_id: id, text: id, runs: { type: "array", minItems: 1, items: textRun }, ...box, style }, ["slide_id", "x", "y", "width", "height"]),
+  operation("add_shape", {
+    slide_id: id, shape: { type: "string", minLength: 1, description: "Google Slides ShapeType, e.g. RECTANGLE, ROUND_RECTANGLE, ELLIPSE, CHEVRON, DONUT, CLOUD_CALLOUT" },
+    ...box, fill_color: color, alpha, rotation: { type: "number", description: "Clockwise rotation in degrees around the centre" },
+    link_url: { type: "string", format: "uri" }, text: id, text_style: style, ...outline,
+  }, ["slide_id", "shape", "x", "y", "width", "height"]),
+  { ...operation("add_image", { slide_id: id, ...imageSource, ...box, alt_text: { type: "string" }, title: { type: "string" }, rotation: { type: "number" } }, ["slide_id", "x", "y", "width", "height"]), ...atLeastOne("url", "drive_file_id") },
+  operation("add_table", {
+    slide_id: id, rows: { type: "integer", minimum: 1 }, columns: { type: "integer", minimum: 1 }, ...box,
+    cells: { type: "array", items: { type: "array", items: { type: "string" } } },
+    header_row: { type: "boolean" }, header_fill_color: color, body_fill_color: color, text_color: color,
+    font_size: { type: "number", exclusiveMinimum: 0 }, bold: { type: "boolean" }, align: alignment,
+    border_color: color, border_weight: { type: "number", minimum: 0 },
+    cell_styles: { type: "array", items: { type: "array", items: cellStyle } },
+  }, ["slide_id", "rows", "columns", "x", "y", "width", "height"]),
   operation("replace_text", { element_id: id, text: { type: "string" } }, ["element_id", "text"]),
-  operation("style_text", { element_id: id, style }, ["element_id", "style"]),
-  { ...operation("style_shape", { element_id: id, fill_color: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" }, outline_color: { type: "string", pattern: "^#[0-9a-fA-F]{6}$", description: "Shape outline color as #RRGGBB" } }, ["element_id"]), anyOf: [{ required: ["fill_color"] }, { required: ["outline_color"] }] },
-  operation("set_background", { slide_id: id, color: { type: "string", pattern: "^#[0-9a-fA-F]{6}$" } }, ["slide_id", "color"]),
+  operation("style_text", { element_id: id, style, start_index: { type: "integer", minimum: 0 }, end_index: { type: "integer", minimum: 0 } }, ["element_id", "style"]),
+  { ...operation("style_shape", { element_id: id, fill_color: color, alpha, content_alignment: { type: "string", enum: ["TOP", "MIDDLE", "BOTTOM"] }, link_url: { type: "string", format: "uri" }, text_style: style, ...outline }, ["element_id"]), ...atLeastOne("fill_color", "alpha", "content_alignment", "link_url", "text_style", "outline_color", "outline_weight", "outline_alpha", "outline_dash_style") },
+  { ...operation("style_image", { element_id: id, link_url: { type: "string", format: "uri" }, ...outline }, ["element_id"]), ...atLeastOne("link_url", "outline_color", "outline_weight", "outline_alpha", "outline_dash_style") },
+  { ...operation("set_background", { slide_id: id, color, theme_color: { type: "string", enum: ["DARK1", "LIGHT1", "DARK2", "LIGHT2", "ACCENT1", "ACCENT2", "ACCENT3", "ACCENT4", "ACCENT5", "ACCENT6", "HYPERLINK", "FOLLOWED_HYPERLINK"] }, image_url: { type: "string", format: "uri" }, drive_file_id: id }, ["slide_id"]), ...atLeastOne("color", "theme_color", "image_url", "drive_file_id") },
+  operation("add_notes", { slide_id: id, text: id }, ["slide_id", "text"]),
+  operation("link_element", { element_id: id, url: { type: "string", format: "uri" } }, ["element_id", "url"]),
+  operation("set_alt_text", { element_id: id, title: { type: "string" }, description: { type: "string" } }, ["element_id"]),
+  operation("z_order", { element_ids: { type: "array", minItems: 1, items: id }, operation: { type: "string", enum: ["BRING_TO_FRONT", "BRING_FORWARD", "SEND_TO_BACK", "SEND_BACKWARD"] } }, ["element_ids", "operation"]),
+  operation("align_elements", { element_ids: { type: "array", minItems: 1, items: id }, alignment: { type: "string", enum: ["LEFT", "CENTER", "RIGHT", "TOP", "MIDDLE", "BOTTOM"] } }, ["element_ids", "alignment"]),
+  operation("distribute_elements", { element_ids: { type: "array", minItems: 2, items: id }, axis: { type: "string", enum: ["HORIZONTAL", "VERTICAL"] } }, ["element_ids", "axis"]),
   operation("move_element", { element_id: id, x: number, y: number }, ["element_id", "x", "y"]),
-  operation("transform_element", { element_id: id, x: number, y: number, scale_x: { type: "number", exclusiveMinimum: 0 }, scale_y: { type: "number", exclusiveMinimum: 0 } }, ["element_id", "x", "y", "scale_x", "scale_y"]),
+  operation("transform_element", { element_id: id, x: number, y: number, scale_x: { type: "number", exclusiveMinimum: 0 }, scale_y: { type: "number", exclusiveMinimum: 0 }, rotation: { type: "number" } }, ["element_id", "x", "y", "scale_x", "scale_y"]),
   operation("delete_element", { element_id: id }, ["element_id"]),
 ];
 
@@ -612,17 +666,17 @@ export const tools: Tool[] = [
   },
   {
     name: "create_presentation",
-    description: "Create an empty Google Slides presentation; returns its ID and URL.",
-    inputSchema: { type: "object", properties: { title: id }, required: ["title"] },
+    description: "Create an empty Google Slides presentation; returns its ID and URL. Optionally set the page size in points (default 720x405).",
+    inputSchema: { type: "object", properties: { title: id, width: { type: "number", exclusiveMinimum: 0 }, height: { type: "number", exclusiveMinimum: 0 } }, required: ["title"] },
   },
   {
     name: "inspect_presentation",
-    description: "Inspect slide and element IDs, positions, sizes, text, styles and revision before editing. Coordinates are in the units returned by Google; 1 point = 12,700 EMU.",
+    description: "Inspect slide, layout, master and element IDs, placeholders, positions, sizes, text, styles and revision before editing. Use a layout id with add_slide layout_id to inherit a master. Coordinates are in the units returned by Google; 1 point = 12,700 EMU.",
     inputSchema: { type: "object", properties: { presentation_id: id }, required: ["presentation_id"] },
   },
   {
     name: "edit_presentation",
-    description: "Apply Slides edits atomically. Set fill_color and/or outline_color on shapes using #RRGGBB. Coordinates and dimensions are points. Slide index is zero-based; move_slide index is based on the order BEFORE the move. replace_text replaces the entire text of an element and may change its existing formatting. move_element x/y are relative offsets; transform_element replaces the existing transform (including rotation) with absolute translation and scale relative to the element's intrinsic size. add_slide/add_text_box/add_shape return generated IDs; duplicate_slide returns its new ID in replies. For safety confirm before deleting. Use revision_id from inspect_presentation to reject stale edits. New IDs are available after this call, so add content to a new slide in a subsequent call.",
+    description: "Apply Slides edits atomically. Coordinates and dimensions are points. Text styles support alignment, vertical anchor, line spacing, space before/after, bullets and per-range styling (style_text start_index/end_index or add_text_box runs). Shape styles support fill, alpha, outline colour/weight/alpha/dash and rotation; the full Google ShapeType set is accepted. add_image uses a public URL or Drive file ID; set_background accepts a colour or a stretched image; add_table creates a real table; add_notes, link_element, set_alt_text and z_order cover notes, links, alt text and layering. add_slide accepts a predefined layout or layout_id so the deck can inherit a master. copy_slide copies a slide from another presentation. Slide index is zero-based; move_slide index is based on the order BEFORE the move. replace_text replaces the entire text and may change formatting. move_element x/y are relative offsets; transform_element replaces the existing transform with absolute translation and scale. For safety confirm before deleting. Use revision_id from inspect_presentation to reject stale edits. New IDs are available after this call, so add content to a new slide in a subsequent call.",
     inputSchema: { type: "object", properties: { presentation_id: id, revision_id: id, operations: { type: "array", minItems: 1, maxItems: 100, items: { oneOf: slideOperations } } }, required: ["presentation_id", "operations"] },
   },
   {
@@ -632,8 +686,18 @@ export const tools: Tool[] = [
   },
   {
     name: "add_slide_image",
-    description: "Insert a local PNG, JPEG or GIF privately using the configured Apps Script helper. No public sharing. Maximum 3 MiB; x/y/width/height are in points. The absolute path must be accessible on the MCP server host.",
+    description: "Insert a local PNG, JPEG or GIF privately using the configured Apps Script helper. No public sharing. Maximum 3 MiB; x/y/width/height are in points. The absolute path must be accessible on the MCP server host. For images already reachable by URL (or uploaded with upload_drive_file), use edit_presentation add_image instead.",
     inputSchema: { type: "object", properties: { presentation_id: id, slide_id: id, file_path: id, ...box }, required: ["presentation_id", "slide_id", "file_path", "x", "y", "width", "height"] },
+  },
+  {
+    name: "upload_drive_file",
+    description: "Upload a local file to Google Drive and return its file ID and direct URL. Set share_anyone=true to make it publicly readable so edit_presentation add_image can fetch it. This changes Drive sharing.",
+    inputSchema: { type: "object", properties: { file_path: id, name: id, share_anyone: { type: "boolean", description: "Grant anyone with the link read access (default false)" } }, required: ["file_path"] },
+  },
+  {
+    name: "copy_slide",
+    description: "Copy a slide from one presentation into another. With the Apps Script helper configured this is a lossless native copy (including layouts and images); otherwise the source is read and its elements are recreated, with unsupported elements reported in warnings.",
+    inputSchema: { type: "object", properties: { target_presentation_id: id, source_presentation_id: id, source_slide_id: id, index: { type: "integer", minimum: 0 } }, required: ["target_presentation_id", "source_presentation_id", "source_slide_id"] },
   },
 
   // =========================================================================

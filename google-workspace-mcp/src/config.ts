@@ -51,6 +51,8 @@ export const config = {
     "https://www.googleapis.com/auth/calendar.events",
     // Google Drive
     "https://www.googleapis.com/auth/drive.readonly",
+    // Upload files created by this app (upload_drive_file)
+    "https://www.googleapis.com/auth/drive.file",
     // Gmail
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/gmail.send",

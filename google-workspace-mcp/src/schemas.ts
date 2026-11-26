@@ -210,52 +210,170 @@ export const GetPresentationSchema = z.object({
 
 const slideId = z.string().min(1);
 const color = z.string().regex(/^#[0-9a-fA-F]{6}$/, "Use a hex color such as #336699");
+const alignment = z.enum(["START", "CENTER", "END", "JUSTIFIED"]);
+const themeColor = z.enum(["DARK1", "LIGHT1", "DARK2", "LIGHT2", "ACCENT1", "ACCENT2", "ACCENT3", "ACCENT4", "ACCENT5", "ACCENT6", "HYPERLINK", "FOLLOWED_HYPERLINK"]);
+const verticalAnchor = z.enum(["TOP", "MIDDLE", "BOTTOM"]);
+const bulletPreset = z.enum([
+  "BULLET_DISC_CIRCLE_SQUARE",
+  "BULLET_DIAMONDX_ARROW3D_SQUARE",
+  "BULLET_CHECKBOX",
+  "BULLET_ARROW_DIAMOND_DISC",
+  "BULLET_STAR_CIRCLE_SQUARE",
+  "BULLET_ARROW3D_CIRCLE_SQUARE",
+  "BULLET_LEFTTRIANGLE_DIAMOND_DISC",
+  "BULLET_DIAMONDX_HOLLOWDIAMOND_SQUARE",
+  "BULLET_DIAMOND_CIRCLE_SQUARE",
+  "NUMBERED_DIGIT_ALPHA_ROMAN",
+  "NUMBERED_DIGIT_ALPHA_ROMAN_PARENS",
+  "NUMBERED_DIGIT_NESTED",
+  "NUMBERED_UPPERALPHA_ROMAN",
+  "NUMBERED_UPPERROMAN_UPPERALPHA_DIGIT",
+  "NUMBERED_ZERODIGIT_ALPHA_ROMAN",
+]);
+
+/**
+ * Text styling. Paragraph properties (align, spacing, bullets) apply to every
+ * paragraph in the target range. Colour/weight properties apply to every
+ * character in the range. vertical_anchor and the inset-free text frame
+ * properties apply to the containing shape.
+ */
 const textStyle = z.object({
   font_family: z.string().min(1).optional(),
   font_size: z.number().positive().finite().optional(),
   color: color.optional(),
+  background_color: color.optional(),
   bold: z.boolean().optional(),
   italic: z.boolean().optional(),
   underline: z.boolean().optional(),
-  align: z.enum(["START", "CENTER", "END", "JUSTIFIED"]).optional(),
-}).strict().refine((style) => Object.keys(style).length > 0, "Provide at least one style property");
+  strikethrough: z.boolean().optional(),
+  small_caps: z.boolean().optional(),
+  baseline_offset: z.enum(["NONE", "SUPERSCRIPT", "SUBSCRIPT"]).optional(),
+  align: alignment.optional(),
+  vertical_anchor: verticalAnchor.optional(),
+  line_spacing: z.number().positive().finite().optional(),
+  space_before: z.number().nonnegative().finite().optional(),
+  space_after: z.number().nonnegative().finite().optional(),
+  link_url: z.string().url().optional(),
+  bullets: bulletPreset.optional(),
+  remove_bullets: z.boolean().optional(),
+}).strict().superRefine((style, ctx) => {
+  if (Object.keys(style).length === 0) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Provide at least one style property" });
+  if (style.bullets !== undefined && style.remove_bullets) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "bullets and remove_bullets are mutually exclusive" });
+});
+export type SlideTextStyle = z.infer<typeof textStyle>;
+const textRun = z.object({ text: z.string().min(1), style: textStyle }).strict();
+// Accept the full Google Slides ShapeType vocabulary rather than a fixed
+// subset; Google validates unrecognised names.
+const shapeType = z.string().min(1);
 const box = {
   x: z.number().finite(), y: z.number().finite(),
   width: z.number().positive().finite(), height: z.number().positive().finite(),
 };
+const alpha = z.number().min(0).max(1).finite();
+const outline = {
+  outline_color: color.optional(),
+  outline_weight: z.number().nonnegative().finite().optional(),
+  outline_alpha: alpha.optional(),
+  outline_dash_style: z.enum(["SOLID", "DOT", "DASH", "LONG_DASH", "LONG_DOT", "DASH_DOT", "LONG_DASH_DOT"]).optional(),
+};
+const imageSource = {
+  url: z.string().url().optional(),
+  drive_file_id: z.string().min(1).optional(),
+};
+const cellStyle = z.object({
+  fill_color: color.optional(),
+  text_color: color.optional(),
+  bold: z.boolean().optional(),
+  font_size: z.number().positive().finite().optional(),
+  align: alignment.optional(),
+}).strict();
 
-export const CreatePresentationSchema = z.object({ title: z.string().min(1) });
+export const CreatePresentationSchema = z.object({
+  title: z.string().min(1),
+  width: z.number().positive().finite().optional(),
+  height: z.number().positive().finite().optional(),
+}).superRefine((value, ctx) => {
+  if ((value.width === undefined) !== (value.height === undefined)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["width"], message: "Provide both width and height" });
+  }
+});
 export const InspectPresentationSchema = z.object({ presentation_id: slideId });
 export const SlidePreviewSchema = z.object({ presentation_id: slideId, slide_id: slideId });
 export const EditPresentationSchema = z.object({
   presentation_id: slideId,
   revision_id: z.string().min(1).optional(),
   operations: z.array(z.discriminatedUnion("type", [
-    z.object({ type: z.literal("add_slide"), index: z.number().int().nonnegative().optional() }).strict(),
+    z.object({
+      type: z.literal("add_slide"), index: z.number().int().nonnegative().optional(),
+      layout: z.enum(["BLANK", "TITLE", "TITLE_AND_BODY", "TITLE_AND_TWO_COLUMNS", "TITLE_ONLY", "SECTION_HEADER", "SECTION_TITLE_AND_DESCRIPTION", "ONE_COLUMN_TEXT", "MAIN_POINT", "BIG_NUMBER", "CAPTION_ONLY"]).optional(),
+      layout_id: z.string().min(1).optional(),
+    }).strict(),
     z.object({ type: z.literal("delete_slide"), slide_id: slideId }).strict(),
     z.object({ type: z.literal("duplicate_slide"), slide_id: slideId }).strict(),
     z.object({ type: z.literal("move_slide"), slide_id: slideId, index: z.number().int().nonnegative() }).strict(),
-    z.object({ type: z.literal("add_text_box"), slide_id: slideId, text: z.string().min(1), ...box, style: textStyle.optional() }).strict(),
-    z.object({ type: z.literal("add_shape"), slide_id: slideId, shape: z.enum(["RECTANGLE", "ROUND_RECTANGLE", "ELLIPSE", "TRIANGLE"]), ...box, fill_color: color.optional(), outline_color: color.optional() }).strict(),
+    z.object({ type: z.literal("copy_slide"), source_presentation_id: slideId, source_slide_id: slideId, index: z.number().int().nonnegative().optional() }).strict(),
+    z.object({ type: z.literal("add_text_box"), slide_id: slideId, text: z.string().min(1).optional(), runs: z.array(textRun).min(1).optional(), ...box, style: textStyle.optional() }).strict(),
+    z.object({ type: z.literal("add_shape"), slide_id: slideId, shape: shapeType, ...box, fill_color: color.optional(), alpha: alpha.optional(), rotation: z.number().finite().optional(), link_url: z.string().url().optional(), text: z.string().min(1).optional(), text_style: textStyle.optional(), ...outline }).strict(),
+    z.object({ type: z.literal("add_image"), slide_id: slideId, ...imageSource, ...box, alt_text: z.string().optional(), title: z.string().optional(), rotation: z.number().finite().optional() }).strict(),
+    z.object({
+      type: z.literal("add_table"), slide_id: slideId, rows: z.number().int().min(1).max(1000), columns: z.number().int().min(1).max(1000), ...box,
+      cells: z.array(z.array(z.string())).optional(), header_row: z.boolean().optional(),
+      header_fill_color: color.optional(), body_fill_color: color.optional(), text_color: color.optional(),
+      font_size: z.number().positive().finite().optional(), bold: z.boolean().optional(), align: alignment.optional(),
+      border_color: color.optional(), border_weight: z.number().nonnegative().finite().optional(),
+      cell_styles: z.array(z.array(cellStyle)).optional(),
+    }).strict(),
     z.object({ type: z.literal("replace_text"), element_id: slideId, text: z.string() }).strict(),
-    z.object({ type: z.literal("style_text"), element_id: slideId, style: textStyle }).strict(),
-    z.object({ type: z.literal("style_shape"), element_id: slideId, fill_color: color.optional(), outline_color: color.optional() }).strict(),
-    z.object({ type: z.literal("set_background"), slide_id: slideId, color }).strict(),
+    z.object({ type: z.literal("style_text"), element_id: slideId, style: textStyle, start_index: z.number().int().nonnegative().optional(), end_index: z.number().int().nonnegative().optional() }).strict(),
+    z.object({ type: z.literal("style_shape"), element_id: slideId, fill_color: color.optional(), alpha: alpha.optional(), content_alignment: verticalAnchor.optional(), link_url: z.string().url().optional(), text_style: textStyle.optional(), ...outline }).strict(),
+    z.object({ type: z.literal("style_image"), element_id: slideId, link_url: z.string().url().optional(), ...outline }).strict(),
+    z.object({ type: z.literal("set_background"), slide_id: slideId, color: color.optional(), theme_color: themeColor.optional(), image_url: z.string().url().optional(), drive_file_id: z.string().min(1).optional() }).strict(),
+    z.object({ type: z.literal("add_notes"), slide_id: slideId, text: z.string().min(1) }).strict(),
+    z.object({ type: z.literal("link_element"), element_id: slideId, url: z.string().url() }).strict(),
+    z.object({ type: z.literal("set_alt_text"), element_id: slideId, title: z.string().optional(), description: z.string().optional() }).strict(),
+    z.object({ type: z.literal("z_order"), element_ids: z.array(slideId).min(1), operation: z.enum(["BRING_TO_FRONT", "BRING_FORWARD", "SEND_TO_BACK", "SEND_BACKWARD"]) }).strict(),
+    z.object({ type: z.literal("align_elements"), element_ids: z.array(slideId).min(1), alignment: z.enum(["LEFT", "CENTER", "RIGHT", "TOP", "MIDDLE", "BOTTOM"]) }).strict(),
+    z.object({ type: z.literal("distribute_elements"), element_ids: z.array(slideId).min(2), axis: z.enum(["HORIZONTAL", "VERTICAL"]) }).strict(),
     z.object({ type: z.literal("move_element"), element_id: slideId, x: z.number().finite(), y: z.number().finite() }).strict(),
-    z.object({ type: z.literal("transform_element"), element_id: slideId, x: z.number().finite(), y: z.number().finite(), scale_x: z.number().positive().finite(), scale_y: z.number().positive().finite() }).strict(),
+    z.object({ type: z.literal("transform_element"), element_id: slideId, x: z.number().finite(), y: z.number().finite(), scale_x: z.number().positive().finite(), scale_y: z.number().positive().finite(), rotation: z.number().finite().optional() }).strict(),
     z.object({ type: z.literal("delete_element"), element_id: slideId }).strict(),
   ])).min(1).max(100),
 }).superRefine(({ operations }, ctx) => {
   operations.forEach((op, index) => {
-    if (op.type === "style_shape" && op.fill_color === undefined && op.outline_color === undefined) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["operations", index], message: "Provide fill_color or outline_color" });
-    }
+    const issue = (message: string) => ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["operations", index, "type"], message });
+    if (op.type === "add_slide" && op.layout && op.layout_id) issue("Provide layout or layout_id, not both");
+    if (op.type === "style_shape" && op.fill_color === undefined && op.alpha === undefined && op.content_alignment === undefined && op.link_url === undefined && op.text_style === undefined && op.outline_color === undefined && op.outline_weight === undefined && op.outline_alpha === undefined && op.outline_dash_style === undefined) issue("Provide at least one shape, outline or text style property");
+    if (op.type === "style_image" && op.link_url === undefined && op.outline_color === undefined && op.outline_weight === undefined && op.outline_alpha === undefined && op.outline_dash_style === undefined) issue("Provide link_url or outline properties");
+    if (op.type === "add_text_box" && !op.text && !op.runs) issue("Provide text or runs");
+    if (op.type === "add_image" && !op.url && !op.drive_file_id) issue("Provide url or drive_file_id");
+    if (op.type === "add_image" && op.url && op.drive_file_id) issue("Provide url or drive_file_id, not both");
+    if (op.type === "set_background" && !op.color && !op.theme_color && !op.image_url && !op.drive_file_id) issue("Provide color, theme_color, image_url or drive_file_id");
+    if (op.type === "set_background" && (op.image_url || op.drive_file_id) && (op.color || op.theme_color)) issue("Provide a solid colour or an image source, not both");
+    if (op.type === "set_background" && op.image_url && op.drive_file_id) issue("Provide image_url or drive_file_id, not both");
+    if (op.type === "set_background" && op.color && op.theme_color) issue("Provide color or theme_color, not both");
+    if ((op.type === "add_shape" || op.type === "style_shape") && op.alpha !== undefined && op.fill_color === undefined) issue("fill_color is required with alpha");
+    if (op.type === "style_text" && op.start_index !== undefined && op.end_index === undefined) issue("end_index is required with start_index");
+    if (op.type === "style_text" && op.start_index !== undefined && op.end_index !== undefined && op.end_index <= op.start_index) issue("end_index must be greater than start_index");
+    if (op.type === "set_alt_text" && op.title === undefined && op.description === undefined) issue("Provide title or description");
+    if (op.type === "add_table" && op.cells && (op.cells.length !== op.rows || op.cells.some((row) => row.length !== op.columns))) issue("cells dimensions must match rows and columns");
+    if (op.type === "add_table" && op.cell_styles && (op.cell_styles.length !== op.rows || op.cell_styles.some((row) => row.length !== op.columns))) issue("cell_styles dimensions must match rows and columns");
   });
 });
 export type SlideEditOperation = z.infer<typeof EditPresentationSchema>["operations"][number];
 export const AddSlideImageSchema = z.object({
   presentation_id: slideId, slide_id: slideId,
   file_path: z.string().min(1), ...box,
+});
+export const UploadDriveFileSchema = z.object({
+  file_path: z.string().min(1),
+  name: z.string().min(1).optional(),
+  share_anyone: z.boolean().optional().default(false),
+});
+export const CopySlideSchema = z.object({
+  target_presentation_id: slideId,
+  source_presentation_id: slideId,
+  source_slide_id: slideId,
+  index: z.number().int().nonnegative().optional(),
 });
 
 // ============================================================================

@@ -21,3 +21,22 @@ function insertPrivateSlideImage(presentationId, slideId, base64, mimeType, x, y
   presentation.saveAndClose();
   return { objectId };
 }
+
+/**
+ * Copy a slide between presentations. The Apps Script Slides service supports
+ * this natively, preserving text, images, tables, layouts and masters, unlike
+ * the REST API. index may be null to append.
+ */
+function copySlideFromPresentation(sourcePresentationId, sourceSlideId, targetPresentationId, index) {
+  const source = SlidesApp.openById(sourcePresentationId);
+  const target = SlidesApp.openById(targetPresentationId);
+  const slide = source.getSlides().find((item) => item.getObjectId() === sourceSlideId);
+  if (!slide) throw new Error('Source slide not found in presentation');
+  const copied = index === null || index === undefined || index < 0
+    ? target.appendSlide(slide)
+    : target.insertSlide(index, slide);
+  const objectId = copied.getObjectId();
+  source.saveAndClose();
+  target.saveAndClose();
+  return { objectId };
+}
