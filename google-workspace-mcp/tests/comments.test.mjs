@@ -328,6 +328,32 @@ test('Sheets create converts an A1 cell to a grid coordinate anchor', async () =
   });
 });
 
+test('Sheets sheet metadata is cached across anchored comments', async () => {
+  let metadataCalls = 0;
+  let batchCalls = 0;
+
+  const service = new GoogleCommentsService({});
+  service.kindCache.set('sheet-1', 'sheets');
+  service.sheets = {
+    spreadsheets: {
+      get: async () => {
+        metadataCalls++;
+        return { data: { sheets: [{ properties: { sheetId: 7, title: 'Sheet1' } }] } };
+      },
+      batchUpdate: async () => {
+        batchCalls++;
+        return { data: { replies: [] } };
+      },
+    },
+  };
+
+  await service.create('sheet-1', 'first', { cell: 'Sheet1!A1' });
+  await service.create('sheet-1', 'second', { cell: 'Sheet1!B2' });
+
+  assert.equal(metadataCalls, 1);
+  assert.equal(batchCalls, 2);
+});
+
 test('Slides create anchors shape text using object_id plus quoted_text', async () => {
   const calls = [];
   const service = new GoogleCommentsService({});

@@ -59,6 +59,14 @@ Anchor a new comment with:
 
 `get_doc` no longer embeds comments by default — pass `include_comments: true` for a compact summary.
 
+### Session cache
+Metadata that is safe to be briefly stale is cached in-process, scoped to each service instance (one instance per authenticated session), so it can never leak between accounts:
+
+- Drive `mimeType` → file kind, cached for the life of the service instance (a file's type never changes)
+- Sheet title → sheet ID, cached for 60 seconds so anchored Sheet comments don't re-fetch spreadsheet metadata on every call
+
+The cache is TTL + LRU bounded, coalesces concurrent misses into one API request, and never stores failures. Document and presentation **content**, and `revisionId`, are never cached — edits are always planned against fresh state.
+
 ---
 
 ## 🚀 Quick Start

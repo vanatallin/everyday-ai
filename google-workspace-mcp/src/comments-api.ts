@@ -17,6 +17,7 @@ import { google } from "googleapis";
 import type { docs_v1, drive_v3, sheets_v4, slides_v1 } from "googleapis";
 
 import { logger } from "./logger.js";
+import { MetadataCache } from "./metadata-cache.js";
 import type {
   GoogleAuth,
   FileComment,
@@ -366,7 +367,16 @@ export class GoogleCommentsService {
   private docs: docs_v1.Docs;
   private slides: slides_v1.Slides;
   private sheets: sheets_v4.Sheets;
-  private kindCache = new Map<string, CommentFileKind>();
+
+  // A file's mimeType never changes (conversion creates a new file ID), so the
+  // kind cache never expires — only the LRU cap applies.
+  private kindCache = new MetadataCache<CommentFileKind>({ ttlMs: 0, maxEntries: 1000 });
+
+  // Sheet titles can change; a short TTL keeps A1 resolution correct without
+  // re-fetching spreadsheet metadata on every anchored comment.
+  private sheetIndex = new MetadataCache<Array<{ sheetId: number; title: string }>>({
+    ttlMs: 60_000,
+  });
 
   constructor(auth: GoogleAuth) {
     const castAuth = auth as Parameters<typeof google.drive>[0]["auth"];
@@ -380,25 +390,11 @@ export class GoogleCommentsService {
    * Resolve which API owns the file. Cached: a file's kind never changes.
    */
   async detectKind(fileId: string): Promise<CommentFileKind> {
-    const cached = this.kindCache.get(fileId);
-    if (cached) {
-      return cached;
-    }
-
     try {
-      const response = await this.drive.files.get({ fileId, fields: "mimeType" });
-      const mimeType = response.data.mimeType || "";
-      const kind: CommentFileKind =
-        mimeType === "application/vnd.google-apps.document"
-          ? "doc"
-          : mimeType === "application/vnd.google-apps.presentation"
-            ? "slides"
-            : mimeType === "application/vnd.google-apps.spreadsheet"
-              ? "sheets"
-              : "drive";
-
-      this.kindCache.set(fileId, kind);
-      return kind;
+      return await this.kindCache.get(fileId, async () => {
+        const response = await this.drive.files.get({ fileId, fields: "mimeType" });
+        return kindFromMimeType(response.data.mimeType || "");
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       throw new Error(`Failed to determine file type for ${fileId}: ${message}`);
@@ -838,13 +834,19 @@ export class GoogleCommentsService {
       };
     } else if (anchor.cell) {
       const parsed = parseCell(anchor.cell);
-      const response = await (this.sheets.spreadsheets.get as (params: unknown) => Promise<any>)({
-        spreadsheetId: fileId,
-        fields: "sheets(properties(sheetId,title))",
+      const sheets = await this.sheetIndex.get(fileId, async () => {
+        const response = await (this.sheets.spreadsheets.get as (params: unknown) => Promise<any>)({
+          spreadsheetId: fileId,
+          fields: "sheets(properties(sheetId,title))",
+        });
+        return (response.data.sheets || []).map((sheet: any) => ({
+          sheetId: sheet.properties?.sheetId ?? 0,
+          title: sheet.properties?.title ?? "",
+        }));
       });
-      const sheets: any[] = response.data.sheets || [];
+
       const sheet = parsed.sheetName
-        ? sheets.find((s) => s.properties?.title === parsed.sheetName)
+        ? sheets.find((candidate) => candidate.title === parsed.sheetName)
         : sheets[0];
 
       if (!sheet) {
@@ -852,7 +854,7 @@ export class GoogleCommentsService {
       }
 
       coordinate = {
-        sheetId: sheet.properties.sheetId,
+        sheetId: sheet.sheetId,
         rowIndex: parsed.rowIndex,
         columnIndex: parsed.columnIndex,
       };
@@ -1084,6 +1086,19 @@ function findSlidesElement(presentation: any, objectId: string): any | undefined
     }
   }
   return undefined;
+}
+
+function kindFromMimeType(mimeType: string): CommentFileKind {
+  switch (mimeType) {
+    case "application/vnd.google-apps.document":
+      return "doc";
+    case "application/vnd.google-apps.presentation":
+      return "slides";
+    case "application/vnd.google-apps.spreadsheet":
+      return "sheets";
+    default:
+      return "drive";
+  }
 }
 
 function matchesStatus(comment: FileComment, status: ListCommentsParams["status"]): boolean {
