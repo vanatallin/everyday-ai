@@ -49,10 +49,10 @@ export const config = {
     // Google Calendar
     "https://www.googleapis.com/auth/calendar.readonly",
     "https://www.googleapis.com/auth/calendar.events",
-    // Google Drive
-    "https://www.googleapis.com/auth/drive.readonly",
-    // Upload files created by this app (upload_drive_file)
-    "https://www.googleapis.com/auth/drive.file",
+    // Google Drive — full scope is required to create, reply to, resolve and
+    // delete comments on existing files. It supersedes drive.readonly and
+    // drive.file (uploads and comment reads are included).
+    "https://www.googleapis.com/auth/drive",
     // Gmail
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/gmail.send",

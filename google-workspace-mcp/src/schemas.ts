@@ -134,7 +134,8 @@ export const SearchDocsSchema = z.object({
  */
 export const GetDocSchema = z.object({
   document_id: z.string().min(1, "Document ID is required"),
-});
+  include_comments: z.boolean().optional().default(false),
+}).strict();
 
 /**
  * Schema for create_doc tool
@@ -436,6 +437,92 @@ export const AppendRowsSchema = z.object({
 export const CreateSpreadsheetSchema = z.object({
   title: z.string().min(1, "Title is required"),
 });
+
+/**
+ * Schema for list_comments tool
+ *
+ * Comments are a Drive resource, so `file_id` works for Docs, Slides, Sheets
+ * and any other Drive file.
+ */
+export const ListCommentsSchema = z.object({
+  file_id: z.string().min(1, "File ID is required"),
+  status: z.enum(["all", "open", "resolved"]).optional().default("open"),
+  include_deleted: z.boolean().optional().default(false),
+  max_comments: z.number().int().min(1).max(200).optional().default(50),
+  page_token: z.string().min(1).optional(),
+}).strict();
+
+/**
+ * Schema for manage_comment tool
+ */
+export const ManageCommentSchema = z.object({
+  file_id: z.string().min(1, "File ID is required"),
+  action: z.enum(["create", "reply", "update", "resolve", "reopen", "delete"]),
+  comment_id: z.string().min(1).optional(),
+  post_id: z.string().min(1).optional(),
+  content: z.string().min(1).optional(),
+  // Anchor inputs (create only)
+  quoted_text: z.string().min(1).optional(),
+  start_index: z.number().int().min(0).optional(),
+  end_index: z.number().int().min(0).optional(),
+  tab_id: z.string().min(1).optional(),
+  object_id: z.string().min(1).optional(),
+  table_cell: z.string().min(1).optional(),
+  row_span: z.number().int().min(1).optional(),
+  column_span: z.number().int().min(1).optional(),
+  cell: z.string().min(1).optional(),
+  sheet_id: z.number().int().min(0).optional(),
+  row_index: z.number().int().min(0).optional(),
+  column_index: z.number().int().min(0).optional(),
+  assignee_email: z.string().email().optional(),
+  anchor: z.string().min(1).optional(),
+}).strict()
+  .refine(
+    (value) => value.action === "create" || Boolean(value.comment_id),
+    { message: "comment_id is required for reply, update, resolve, reopen and delete", path: ["comment_id"] }
+  )
+  .refine(
+    (value) => !["create", "reply", "update"].includes(value.action) || Boolean(value.content),
+    { message: "content is required for create, reply and update", path: ["content"] }
+  )
+  .refine(
+    (value) =>
+      (value.start_index === undefined) === (value.end_index === undefined),
+    { message: "start_index and end_index must be provided together", path: ["end_index"] }
+  )
+  .refine(
+    (value) => value.start_index === undefined || value.end_index === undefined || value.end_index > value.start_index,
+    { message: "end_index must be greater than start_index", path: ["end_index"] }
+  )
+  .refine(
+    (value) => value.table_cell === undefined || Boolean(value.object_id),
+    { message: "table_cell requires object_id of the Slides table", path: ["object_id"] }
+  )
+  .refine(
+    (value) => value.action === "create" || onlyCreateFieldsAbsent(value as unknown as Record<string, unknown>),
+    { message: "anchor fields and assignee_email are only valid for the create action", path: ["quoted_text"] }
+  );
+
+const CREATE_ONLY_FIELDS = [
+  "quoted_text",
+  "start_index",
+  "end_index",
+  "tab_id",
+  "object_id",
+  "table_cell",
+  "row_span",
+  "column_span",
+  "cell",
+  "sheet_id",
+  "row_index",
+  "column_index",
+  "assignee_email",
+  "anchor",
+] as const;
+
+function onlyCreateFieldsAbsent(value: Record<string, unknown>): boolean {
+  return CREATE_ONLY_FIELDS.every((field) => value[field] === undefined);
+}
 
 /**
  * Validate and parse input with a schema

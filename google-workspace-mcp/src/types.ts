@@ -346,6 +346,82 @@ export interface DocComment {
 }
 
 // ============================================================================
+// Drive Comments Types
+//
+// Comments live in the Drive API, not the Docs/Slides/Sheets APIs, so a single
+// service covers every Workspace file type.
+// ============================================================================
+
+export type CommentStatusFilter = "all" | "open" | "resolved";
+
+export interface CommentReply {
+  id: string;
+  author: string;
+  content: string;
+  createdTime: string;
+  action?: string;
+}
+
+export interface FileComment {
+  id: string;
+  author: string;
+  content: string;
+  createdTime: string;
+  modifiedTime?: string;
+  resolved: boolean;
+  quotedText?: string;
+  anchor?: string;
+  anchorId?: string;
+  postId?: string;
+  deleted?: boolean;
+  replies: CommentReply[];
+}
+
+/**
+ * Which API owns a file's comments. Google Docs, Slides and Sheets expose
+ * native, anchor-aware comment endpoints; other Drive files fall back to the
+ * Drive API, which cannot anchor comments inside editor files.
+ */
+export type CommentFileKind = "doc" | "slides" | "sheets" | "drive";
+
+/**
+ * Anchor inputs accepted by `manage_comment` on create.
+ *
+ * - Docs: `quoted_text` or `start_index`/`end_index` (+ optional `tab_id`)
+ * - Slides: `object_id` (page or element), optionally with a text range
+ * - Sheets: `cell` (A1) or `sheet_id` + `row_index`/`column_index`
+ */
+export interface CommentAnchorInput {
+  quotedText?: string;
+  startIndex?: number;
+  endIndex?: number;
+  tabId?: string;
+  objectId?: string;
+  /** Slides table cell in A1-style notation within the table, e.g. "B2" or "B2:C3". */
+  tableCell?: string;
+  rowSpan?: number;
+  columnSpan?: number;
+  cell?: string;
+  sheetId?: number;
+  rowIndex?: number;
+  columnIndex?: number;
+  /** Raw anchor JSON for the Drive fallback path. */
+  rawAnchor?: string;
+}
+
+export interface ListCommentsParams {
+  status: CommentStatusFilter;
+  includeDeleted: boolean;
+  maxComments: number;
+  pageToken?: string;
+}
+
+export interface ListCommentsResult {
+  comments: FileComment[];
+  nextPageToken?: string;
+}
+
+// ============================================================================
 // Gmail Types
 // ============================================================================
 

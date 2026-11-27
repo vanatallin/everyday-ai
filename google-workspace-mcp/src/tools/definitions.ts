@@ -533,13 +533,17 @@ export const tools: Tool[] = [
   {
     name: "get_doc",
     description:
-      "Get the content of a Google Doc. Returns text content with tables formatted as markdown tables.",
+      "Get the content of a Google Doc. Returns text content with tables formatted as markdown tables. Comments are excluded by default; set include_comments to append a compact summary, or use list_comments for the full thread.",
     inputSchema: {
       type: "object" as const,
       properties: {
         document_id: {
           type: "string",
           description: "The Google Doc document ID",
+        },
+        include_comments: {
+          type: "boolean",
+          description: "Append a compact comment summary to the output (default: false)",
         },
       },
       required: ["document_id"],
@@ -839,6 +843,134 @@ export const tools: Tool[] = [
         },
       },
       required: ["title"],
+    },
+  },
+
+  // Comments (Drive API — works for Docs, Slides, Sheets and any Drive file)
+  {
+    name: "list_comments",
+    description:
+      "List comments on a Google Doc, Slide deck, Sheet or other Drive file. Uses the editor's native comment API so quoted/anchor context is preserved. Returns a compact summary: id, author, open/resolved status, quoted text and truncated content.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        file_id: {
+          type: "string",
+          description: "The document, presentation or spreadsheet ID",
+        },
+        status: {
+          type: "string",
+          enum: ["all", "open", "resolved"],
+          description: "Filter by comment status (default: open)",
+        },
+        include_deleted: {
+          type: "boolean",
+          description: "Include deleted comments (default: false)",
+        },
+        max_comments: {
+          type: "number",
+          description: "Maximum number of comments to return, 1-200 (default: 50)",
+        },
+        page_token: {
+          type: "string",
+          description:
+            "Pagination token from a previous list_comments call (Drive fallback files only)",
+        },
+      },
+      required: ["file_id"],
+    },
+  },
+  {
+    name: "manage_comment",
+    description:
+      "Create, reply, update, resolve, reopen or delete a comment on a Google Doc, Slide deck, Sheet or other Drive file. On Docs/Slides/Sheets comments use the editor's native anchor API, so they are highlighted in the editor like a manually added comment. Anchor a create with quoted_text (Docs, or Slides with object_id), start_index/end_index, object_id, or cell.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        file_id: {
+          type: "string",
+          description: "The document, presentation or spreadsheet ID",
+        },
+        action: {
+          type: "string",
+          enum: ["create", "reply", "update", "resolve", "reopen", "delete"],
+          description: "The operation to perform",
+        },
+        comment_id: {
+          type: "string",
+          description: "Comment ID (required for reply, update, resolve, reopen and delete)",
+        },
+        post_id: {
+          type: "string",
+          description: "Post ID to edit on update; defaults to the thread's head post",
+        },
+        content: {
+          type: "string",
+          description: "Comment text (required for create, reply and update)",
+        },
+        quoted_text: {
+          type: "string",
+          description:
+            "Create only. Text to find and anchor the comment to. Docs: first match in the body. Slides: pair with object_id (shape text) or object_id + table_cell (text inside a table cell). Not supported for Sheets.",
+        },
+        start_index: {
+          type: "number",
+          description: "Create only. Zero-based start index for a precise text-range anchor",
+        },
+        end_index: {
+          type: "number",
+          description: "Create only. Exclusive end index; must be greater than start_index",
+        },
+        tab_id: {
+          type: "string",
+          description: "Create only. Document tab for the range anchor (Docs)",
+        },
+        object_id: {
+          type: "string",
+          description:
+            "Create only. Slides page or page element to anchor to. Add start_index/end_index or quoted_text to anchor to text inside a shape; add table_cell to anchor inside a table.",
+        },
+        table_cell: {
+          type: "string",
+          description:
+            "Create only. Slides table cell in A1-style notation within the table, e.g. \"B2\" or \"B2:C3\". Requires object_id of the table. Without a text range it highlights the cells; add quoted_text or start_index/end_index to highlight text inside one cell.",
+        },
+        row_span: {
+          type: "number",
+          description: "Create only. Number of table rows covered when anchoring to a table range",
+        },
+        column_span: {
+          type: "number",
+          description: "Create only. Number of table columns covered when anchoring to a table range",
+        },
+        cell: {
+          type: "string",
+          description:
+            "Create only. Sheets cell in A1 notation, e.g. \"Sheet1!B2\". Must be a single cell; ranges are not supported by the Sheets comment API.",
+        },
+        sheet_id: {
+          type: "number",
+          description: "Create only. Sheets numeric sheet ID, with row_index and column_index",
+        },
+        row_index: {
+          type: "number",
+          description: "Create only. Zero-based row index for a Sheets anchor",
+        },
+        column_index: {
+          type: "number",
+          description: "Create only. Zero-based column index for a Sheets anchor",
+        },
+        assignee_email: {
+          type: "string",
+          description: "Create only. Assign the comment to this person",
+        },
+        anchor: {
+          type: "string",
+          description:
+            "Create only. Raw anchor JSON for the Drive fallback (non-Docs/Slides/Sheets files)",
+        },
+      },
+      required: ["file_id", "action"],
     },
   },
 ];

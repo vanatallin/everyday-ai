@@ -7,6 +7,7 @@ import { authenticate, isAuthenticated, getAuthStatus } from "../auth.js";
 import { GoogleMeetService } from "../meet-api.js";
 import { GmailService, getHeader, getMessageBody } from "../gmail-api.js";
 import { GoogleDocsService, getDocumentUrl } from "../docs-api.js";
+import { GoogleCommentsService, formatComments, describeAnchor, isAnchorEmpty } from "../comments-api.js";
 import { GoogleSlidesService, getPresentationUrl } from "../slides-api.js";
 import { GoogleSheetsService, getSpreadsheetUrl } from "../sheets-api.js";
 import { logger } from "../logger.js";
@@ -58,6 +59,8 @@ import {
   UpdateCellsSchema,
   AppendRowsSchema,
   CreateSpreadsheetSchema,
+  ListCommentsSchema,
+  ManageCommentSchema,
 } from "../schemas.js";
 import type { ToolResponse, GoogleAuth } from "../types.js";
 
@@ -67,6 +70,7 @@ let gmailService: GmailService | null = null;
 let docsService: GoogleDocsService | null = null;
 let slidesService: GoogleSlidesService | null = null;
 let sheetsService: GoogleSheetsService | null = null;
+let commentsService: GoogleCommentsService | null = null;
 let authInstance: GoogleAuth | null = null;
 
 /**
@@ -134,6 +138,16 @@ async function getSheetsService(): Promise<GoogleSheetsService> {
   const auth = await ensureAuth();
   sheetsService = new GoogleSheetsService(auth);
   return sheetsService;
+}
+
+/**
+ * Get Comments service (lazy initialization)
+ */
+async function getCommentsService(): Promise<GoogleCommentsService> {
+  if (commentsService) return commentsService;
+  const auth = await ensureAuth();
+  commentsService = new GoogleCommentsService(auth);
+  return commentsService;
 }
 
 /**
@@ -221,6 +235,23 @@ async function withSheetsAuth<T>(
   }
 }
 
+/**
+ * Wrapper for Comments handlers
+ */
+async function withCommentsAuth<T>(
+  handler: (service: GoogleCommentsService) => Promise<T>
+): Promise<T | ToolResponse> {
+  try {
+    const service = await getCommentsService();
+    return await handler(service);
+  } catch (error) {
+    if (error instanceof Error && error.message === "NOT_AUTHENTICATED") {
+      return NOT_AUTHENTICATED_RESPONSE;
+    }
+    throw error;
+  }
+}
+
 // ============================================================================
 // Auth Tool Handlers
 // ============================================================================
@@ -238,6 +269,7 @@ export async function handleAuthenticate(args: unknown): Promise<ToolResponse> {
     docsService = new GoogleDocsService(authInstance);
     slidesService = new GoogleSlidesService(authInstance);
     sheetsService = new GoogleSheetsService(authInstance);
+    commentsService = new GoogleCommentsService(authInstance);
     return createSuccessResponse(
       "✅ Successfully authenticated with Google!\n\nYou can now use Google Meet, Calendar, Gmail, Docs, Slides, and Sheets tools."
     );
@@ -761,12 +793,15 @@ export async function handleSearchDocs(args: unknown): Promise<ToolResponse> {
 
 export async function handleGetDoc(args: unknown): Promise<ToolResponse> {
   return withDocsAuth(async (service) => {
-    const { document_id } = validateInput(GetDocSchema, args);
+    const { document_id, include_comments } = validateInput(GetDocSchema, args);
 
-    // Fetch document content and comments in parallel
+    // Comments are opt-in: fetching them for every read wastes context and an
+    // extra API call. list_comments is the richer, paginated path.
     const [docWithTabs, comments] = await Promise.all([
       service.getDocumentWithTabs(document_id),
-      service.getDocumentComments(document_id).catch(() => []), // Don't fail if comments can't be fetched
+      include_comments
+        ? service.getDocumentComments(document_id).catch(() => []) // Don't fail if comments can't be fetched
+        : Promise.resolve([]),
     ]);
 
     let content: string;
@@ -783,48 +818,16 @@ export async function handleGetDoc(args: unknown): Promise<ToolResponse> {
         .join("\n\n---\n\n");
     }
 
-    // Format comments section
-    let commentsSection = "";
-    if (comments.length > 0) {
-      const openComments = comments.filter(c => !c.resolved);
-      const resolvedComments = comments.filter(c => c.resolved);
-
-      commentsSection = `\n\n---\n\n## Comments (${comments.length})`;
-
-      if (openComments.length > 0) {
-        commentsSection += `\n\n### Open (${openComments.length})\n`;
-        commentsSection += openComments.map((c) => {
-          let commentText = `**${c.author}** (${new Date(c.createdTime).toLocaleString()}):\n`;
-          if (c.quotedText) {
-            commentText += `> "${c.quotedText}"\n\n`;
-          }
-          commentText += c.content;
-          if (c.replies.length > 0) {
-            commentText += "\n" + c.replies.map(r =>
-              `  - **${r.author}**: ${r.content}`
-            ).join("\n");
-          }
-          return commentText;
-        }).join("\n\n");
-      }
-
-      if (resolvedComments.length > 0) {
-        commentsSection += `\n\n### Resolved (${resolvedComments.length})\n`;
-        commentsSection += resolvedComments.map((c) => {
-          let commentText = `~~**${c.author}**~~: ${c.content}`;
-          if (c.quotedText) {
-            commentText = `> "${c.quotedText}"\n\n` + commentText;
-          }
-          return commentText;
-        }).join("\n\n");
-      }
-    }
+    // Compact summary only — use list_comments for full bodies and pagination.
+    const commentsSection =
+      comments.length > 0
+        ? `\n\n---\n\n${formatComments(document_id, { comments })}`
+        : "";
 
     return createSuccessResponse(
       `**Document: ${docWithTabs.title}**\n\n` +
         `- ID: \`${document_id}\`\n` +
         tabInfo +
-        (comments.length > 0 ? `- Comments: ${comments.length} (${comments.filter(c => !c.resolved).length} open)\n` : "") +
         `- URL: ${getDocumentUrl(document_id)}\n\n` +
         `---\n\n${content}${commentsSection}`
     );
@@ -1242,6 +1245,105 @@ export async function handleCreateSpreadsheet(args: unknown): Promise<ToolRespon
 }
 
 // ============================================================================
+// Comment Handlers (Drive API — Docs, Slides, Sheets)
+// ============================================================================
+
+export async function handleListComments(args: unknown): Promise<ToolResponse> {
+  return withCommentsAuth(async (service) => {
+    const params = validateInput(ListCommentsSchema, args);
+
+    const result = await service.list(params.file_id, {
+      status: params.status,
+      includeDeleted: params.include_deleted,
+      maxComments: params.max_comments,
+      pageToken: params.page_token,
+    });
+
+    return createSuccessResponse(formatComments(params.file_id, result));
+  }) as Promise<ToolResponse>;
+}
+
+export async function handleManageComment(args: unknown): Promise<ToolResponse> {
+  return withCommentsAuth(async (service) => {
+    const input = validateInput(ManageCommentSchema, args);
+
+    switch (input.action) {
+      case "create": {
+        const anchor = {
+          quotedText: input.quoted_text,
+          startIndex: input.start_index,
+          endIndex: input.end_index,
+          tabId: input.tab_id,
+          objectId: input.object_id,
+          tableCell: input.table_cell,
+          rowSpan: input.row_span,
+          columnSpan: input.column_span,
+          cell: input.cell,
+          sheetId: input.sheet_id,
+          rowIndex: input.row_index,
+          columnIndex: input.column_index,
+          rawAnchor: input.anchor,
+        };
+
+        const comment = await service.create(
+          input.file_id,
+          input.content!,
+          anchor,
+          input.assignee_email
+        );
+
+        return createSuccessResponse(
+          `✅ **Comment created**\n\n` +
+            `- ID: \`${comment.id}\`\n` +
+            `- Author: ${comment.author}\n` +
+            (isAnchorEmpty(anchor) ? "" : `- Anchored to: ${describeAnchor(anchor)}\n`) +
+            (comment.quotedText ? `- Quoted: "${comment.quotedText}"\n` : "") +
+            (input.assignee_email ? `- Assigned to: ${input.assignee_email}\n` : "") +
+            `\n${comment.content}`
+        );
+      }
+
+      case "reply": {
+        const reply = await service.reply(input.file_id, input.comment_id!, input.content!);
+        return createSuccessResponse(
+          `✅ **Reply added to comment \`${input.comment_id}\`**\n\n` +
+            `- ID: \`${reply.id}\`\n` +
+            `- Author: ${reply.author}\n\n${reply.content}`
+        );
+      }
+
+      case "update": {
+        const comment = await service.update(
+          input.file_id,
+          input.comment_id!,
+          input.content!,
+          input.post_id
+        );
+        return createSuccessResponse(
+          `✅ **Comment \`${comment.id}\` updated**\n\n${comment.content}`
+        );
+      }
+
+      case "resolve":
+      case "reopen": {
+        const resolve = input.action === "resolve";
+        await service.setResolved(input.file_id, input.comment_id!, resolve);
+        return createSuccessResponse(
+          resolve
+            ? `✅ Comment \`${input.comment_id}\` resolved.`
+            : `✅ Comment \`${input.comment_id}\` reopened.`
+        );
+      }
+
+      case "delete": {
+        await service.delete(input.file_id, input.comment_id!);
+        return createSuccessResponse(`✅ Comment \`${input.comment_id}\` deleted.`);
+      }
+    }
+  }) as Promise<ToolResponse>;
+}
+
+// ============================================================================
 // Tool Router
 // ============================================================================
 
@@ -1360,6 +1462,12 @@ export async function handleToolCall(
       return handleAppendRows(args);
     case "create_spreadsheet":
       return handleCreateSpreadsheet(args);
+
+    // Comments
+    case "list_comments":
+      return handleListComments(args);
+    case "manage_comment":
+      return handleManageComment(args);
 
     default:
       return createErrorResponse(`Unknown tool: ${name}`);

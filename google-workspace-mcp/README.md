@@ -39,6 +39,26 @@ A Model Context Protocol (MCP) server for Google Workspace integration. Access G
 | ➕ **Append Text** | Add content to existing docs |
 | 🔄 **Find & Replace** | Replace text in documents |
 
+### Comments (Docs, Slides, Sheets)
+| Feature | Description |
+|---------|-------------|
+| 💬 **List Comments** | Read open/resolved threads on any Drive file |
+| ✍️ **Create Comments** | Start a thread anchored to text, an object or a cell |
+| ↩️ **Reply & Edit** | Reply to a thread or update a comment's text |
+| ✅ **Resolve / Reopen** | Change thread status |
+| 🗑️ **Delete** | Remove a comment thread |
+
+One pair of tools (`list_comments`, `manage_comment`) covers Docs, Slides, Sheets and any other Drive file. The file type is detected automatically from the Drive mimeType.
+
+On Docs, Slides and Sheets, comments use the editor's **native comment API** (`insertComment`, `addCommentReply`, …), so they are anchored to a real text range, object or cell and are highlighted in the editor exactly like a manually added comment. Comments created through the Drive API are always shown as unanchored in Workspace editors, which is why the native path is used.
+
+Anchor a new comment with:
+- Docs: `quoted_text` (first match in the body) or `start_index`/`end_index` (+ optional `tab_id`)
+- Slides: `object_id` (page or element). For text inside a shape, add `quoted_text` or `start_index`/`end_index`. For tables, add `table_cell` (A1-style within the table, e.g. `B2` or `B2:C3`) — without a text range it highlights the cells, and with `quoted_text`/indices it highlights text inside one cell
+- Sheets: `cell` in A1 notation, or `sheet_id` + `row_index`/`column_index`. The Sheets API only anchors to a **single cell**, so `A1:B2` is rejected; `quoted_text` is not supported
+
+`get_doc` no longer embeds comments by default — pass `include_comments: true` for a compact summary.
+
 ---
 
 ## 🚀 Quick Start
@@ -136,7 +156,7 @@ The Slides tools can create presentations, inspect elements and revisions, add, 
 
 Text styling covers alignment, vertical anchor, line spacing, space before/after, bullets (including numbered presets), links, strikethrough, small caps, superscript/subscript and background colour. Shapes cover fill colour and alpha, outline colour/weight/alpha/dash and hyperlinks. For card borders, set `outline_color` and optionally `outline_weight` on `add_shape` or `style_shape`.
 
-`add_image` accepts either `url` (publicly reachable) or `drive_file_id`. Use `upload_drive_file` with `share_anyone: true` to publish a local file and get a Drive ID/direct URL; this requires the `drive.file` OAuth scope and changes the file's sharing. `add_slide_image` remains the private option for local files when the Apps Script helper is configured.
+`add_image` accepts either `url` (publicly reachable) or `drive_file_id`. Use `upload_drive_file` with `share_anyone: true` to publish a local file and get a Drive ID/direct URL; this requires the `drive` OAuth scope and changes the file's sharing. `add_slide_image` remains the private option for local files when the Apps Script helper is configured.
 
 `copy_slide` / the `copy_slide` operation copies a slide across presentations. When the Apps Script helper is configured, `copy_slide` uses `insertSlide`/`appendSlide`, which preserves text, images, tables, layouts and masters losslessly. Without the helper it recreates shapes, text, tables, lines, groups, videos and images that have a public source URL; images without a source URL and unsupported elements are reported in `warnings`.
 
@@ -353,10 +373,18 @@ gmcp-status      # Check auth status
 |------|-------------|---------------|
 | `list_docs` | List recent Google Docs | `limit?` |
 | `search_docs` | Search documents by name | `query`, `limit?` |
-| `get_doc` | Get document content as text | `document_id` |
+| `get_doc` | Get document content as text (comments opt-in) | `document_id`, `include_comments?` |
 | `create_doc` | Create new Google Doc | `title`, `content?` |
 | `append_to_doc` | Append text to document | `document_id`, `text` |
 | `replace_in_doc` | Find and replace text | `document_id`, `search_text`, `replace_text`, `match_case?` |
+
+### Comments (Docs, Slides, Sheets)
+| Tool | Description | Required Args |
+|------|-------------|---------------|
+| `list_comments` | List comments with pagination and status filter | `file_id`, `status?`, `max_comments?`, `page_token?` |
+| `manage_comment` | Create, reply, update, resolve, reopen or delete | `file_id`, `action`, `comment_id?`, `content?` |
+
+`manage_comment` actions: `create`, `reply`, `update`, `resolve`, `reopen`, `delete`. Anchors are native: `quoted_text`, `start_index`/`end_index`, `object_id`, `table_cell` or `cell`, depending on the file type (see the Comments features section above). `update` edits the head post by default; pass `post_id` to edit a specific reply. Files that are not Google Docs/Slides/Sheets fall back to Drive comments, which cannot be anchored inside editor files.
 
 ### Example: Create Calendar Event
 
@@ -528,7 +556,7 @@ This server requests the following permissions:
 | `meetings.space.created` | Create meeting spaces |
 | `calendar.readonly` | Read calendar events |
 | `calendar.events` | Create/modify calendar events |
-| `drive.readonly` | Access recordings in Drive |
+| `drive` | Read recordings, upload files, and read/write comments on non-editor Drive files (Docs/Slides/Sheets comments use their own APIs) |
 
 ### Gmail
 | Scope | Purpose |
@@ -544,7 +572,7 @@ This server requests the following permissions:
 | `documents` | Create and edit documents |
 | `documents.readonly` | Read documents |
 
-> ⚠️ **Note**: If you previously authenticated with fewer scopes, delete `token.json` and re-authenticate to grant all permissions.
+> ⚠️ **Note**: If you previously authenticated with fewer scopes, delete `token.json` and re-authenticate to grant all permissions. Docs/Slides/Sheets comment writes use the `documents`, `presentations` and `spreadsheets` scopes already requested for editing. The full `drive` scope is only needed for comments on non-editor Drive files, and supersedes `drive.readonly`/`drive.file`.
 
 ---
 
