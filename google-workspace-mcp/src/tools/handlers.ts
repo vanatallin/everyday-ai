@@ -63,92 +63,51 @@ import {
   ManageCommentSchema,
 } from "../schemas.js";
 import type { ToolResponse, GoogleAuth } from "../types.js";
-
-// Singleton service instances
-let meetService: GoogleMeetService | null = null;
-let gmailService: GmailService | null = null;
-let docsService: GoogleDocsService | null = null;
-let slidesService: GoogleSlidesService | null = null;
-let sheetsService: GoogleSheetsService | null = null;
-let commentsService: GoogleCommentsService | null = null;
-let authInstance: GoogleAuth | null = null;
+import { currentSession, type SessionContext } from "../session.js";
 
 /**
- * Ensure authenticated and return auth instance
+ * Ensure the active session is authenticated and return its auth instance.
+ *
+ * The `local` identity keeps the historical behavior of loading
+ * `credentials.json` / `token.json` from disk. Other identities are expected to
+ * have auth installed by the transport layer (per-user token store).
  */
 async function ensureAuth(): Promise<GoogleAuth> {
-  if (authInstance) {
-    return authInstance;
+  const session = currentSession();
+  const existing = session.peekAuth();
+  if (existing) {
+    return existing;
   }
 
-  if (isAuthenticated()) {
+  if (session.user.source !== "local") {
+    throw new Error("NOT_AUTHENTICATED");
+  }
+
+  if (await isAuthenticated(session.user)) {
     logger.debug("Auto-authenticating with saved credentials");
-    authInstance = await authenticate();
-    return authInstance;
+    const auth = await authenticate({ identity: session.user });
+    session.setAuth(auth);
+    return auth;
   }
 
   throw new Error("NOT_AUTHENTICATED");
 }
 
-/**
- * Get Meet service (lazy initialization)
- */
-async function getMeetService(): Promise<GoogleMeetService> {
-  if (meetService) return meetService;
-  const auth = await ensureAuth();
-  meetService = new GoogleMeetService(auth);
-  return meetService;
+/** Resolve a service from the active session, authenticating on first use. */
+async function sessionService<T>(pick: (session: SessionContext) => T): Promise<T> {
+  const session = currentSession();
+  if (!session.peekAuth()) {
+    await ensureAuth();
+  }
+  return pick(session);
 }
 
-/**
- * Get Gmail service (lazy initialization)
- */
-async function getGmailService(): Promise<GmailService> {
-  if (gmailService) return gmailService;
-  const auth = await ensureAuth();
-  gmailService = new GmailService(auth);
-  return gmailService;
-}
-
-/**
- * Get Docs service (lazy initialization)
- */
-async function getDocsService(): Promise<GoogleDocsService> {
-  if (docsService) return docsService;
-  const auth = await ensureAuth();
-  docsService = new GoogleDocsService(auth);
-  return docsService;
-}
-
-/**
- * Get Slides service (lazy initialization)
- */
-async function getSlidesService(): Promise<GoogleSlidesService> {
-  if (slidesService) return slidesService;
-  const auth = await ensureAuth();
-  slidesService = new GoogleSlidesService(auth);
-  return slidesService;
-}
-
-/**
- * Get Sheets service (lazy initialization)
- */
-async function getSheetsService(): Promise<GoogleSheetsService> {
-  if (sheetsService) return sheetsService;
-  const auth = await ensureAuth();
-  sheetsService = new GoogleSheetsService(auth);
-  return sheetsService;
-}
-
-/**
- * Get Comments service (lazy initialization)
- */
-async function getCommentsService(): Promise<GoogleCommentsService> {
-  if (commentsService) return commentsService;
-  const auth = await ensureAuth();
-  commentsService = new GoogleCommentsService(auth);
-  return commentsService;
-}
+const getMeetService = () => sessionService((s) => s.meetService());
+const getGmailService = () => sessionService((s) => s.gmailService());
+const getDocsService = () => sessionService((s) => s.docsService());
+const getSlidesService = () => sessionService((s) => s.slidesService());
+const getSheetsService = () => sessionService((s) => s.sheetsService());
+const getCommentsService = () => sessionService((s) => s.commentsService());
 
 /**
  * Wrapper to handle authentication errors consistently
@@ -257,19 +216,24 @@ async function withCommentsAuth<T>(
 // ============================================================================
 
 export async function handleAuthStatus(): Promise<ToolResponse> {
-  return createSuccessResponse(getAuthStatus());
+  const session = currentSession();
+  return createSuccessResponse(await getAuthStatus(session.user));
 }
 
 export async function handleAuthenticate(args: unknown): Promise<ToolResponse> {
   try {
     const { force } = validateInput(AuthenticateSchema, args ?? {});
-    authInstance = await authenticate({ force });
-    meetService = new GoogleMeetService(authInstance);
-    gmailService = new GmailService(authInstance);
-    docsService = new GoogleDocsService(authInstance);
-    slidesService = new GoogleSlidesService(authInstance);
-    sheetsService = new GoogleSheetsService(authInstance);
-    commentsService = new GoogleCommentsService(authInstance);
+    const session = currentSession();
+
+    // Browser-based consent only works for the local stdio user. Remote
+    // sessions are authenticated by the transport layer instead.
+    if (session.user.source !== "local") {
+      return createErrorResponse(
+        "❌ This session cannot start a local OAuth flow. Authenticate through the server's OAuth endpoint and retry."
+      );
+    }
+
+    session.setAuth(await authenticate({ force, identity: session.user }));
     return createSuccessResponse(
       "✅ Successfully authenticated with Google!\n\nYou can now use Google Meet, Calendar, Gmail, Docs, Slides, and Sheets tools."
     );

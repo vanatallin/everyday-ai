@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * Google Service MCP Server
  *
@@ -10,58 +9,13 @@
  * - Calendar integration for upcoming/past meetings
  */
 
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
 
+import { config } from "./config.js";
 import { logger } from "./logger.js";
-import { tools, handleToolCall } from "./tools/index.js";
-import { createErrorResponse } from "./utils.js";
-
-// Server metadata
-const SERVER_NAME = "google-service";
-const SERVER_VERSION = "1.0.0";
-
-/**
- * Create and configure the MCP server
- */
-function createServer(): Server {
-  const server = new Server(
-    {
-      name: SERVER_NAME,
-      version: SERVER_VERSION,
-    },
-    {
-      capabilities: {
-        tools: {},
-      },
-    }
-  );
-
-  // Handle list tools request
-  server.setRequestHandler(ListToolsRequestSchema, async () => {
-    logger.debug("Listing available tools");
-    return { tools };
-  });
-
-  // Handle tool calls
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const { name, arguments: args } = request.params;
-
-    try {
-      return await handleToolCall(name, args);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      logger.error(`Tool call failed: ${name}`, error);
-      return createErrorResponse(`Error: ${message}`);
-    }
-  });
-
-  return server;
-}
+import { createServer, SERVER_NAME, SERVER_VERSION } from "./mcp-server.js";
+import { startHttpServer } from "./http.js";
+import { SessionStore } from "./session.js";
 
 /**
  * Main entry point
@@ -69,7 +23,14 @@ function createServer(): Server {
 async function main(): Promise<void> {
   logger.info(`Starting ${SERVER_NAME} v${SERVER_VERSION}`);
 
-  const server = createServer();
+  const sessions = new SessionStore();
+
+  if (config.transport === "http") {
+    await startHttpServer(sessions);
+    return;
+  }
+
+  const server = createServer(sessions);
   const transport = new StdioServerTransport();
 
   await server.connect(transport);

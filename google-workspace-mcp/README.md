@@ -67,6 +67,62 @@ Metadata that is safe to be briefly stale is cached in-process, scoped to each s
 
 The cache is TTL + LRU bounded, coalesces concurrent misses into one API request, and never stores failures. Document and presentation **content**, and `revisionId`, are never cached — edits are always planned against fresh state.
 
+### Per-user tokens
+Each user identity (`subject`) gets its own token entry; nothing is shared between accounts.
+
+- `GOOGLE_TOKEN_DIR` — directory holding one token file per user (default: `./tokens`)
+- `GOOGLE_TOKEN_ENCRYPTION_KEY` — when set, tokens are encrypted at rest with AES-256-GCM
+- The `local` (stdio) identity keeps using `token.json`, so existing installs need no migration
+
+Token files are written atomically with `0600` permissions. A corrupt or undecryptable entry is treated as unauthenticated rather than crashing the server.
+
+### HTTP transport (remote / multi-user)
+`MCP_TRANSPORT=http` serves the MCP endpoint over HTTP instead of stdio. Each client session is bound to one identity and cannot be reused by another.
+
+```bash
+MCP_TRANSPORT=http \
+MCP_HOST=127.0.0.1 \
+PORT=8080 \
+MCP_AUTH_TOKENS='{"<token>":{"subject":"user-1","email":"user@example.com"}}' \
+GOOGLE_TOKEN_ENCRYPTION_KEY='<long random string>' \
+npm start
+```
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `MCP_TRANSPORT` | `stdio` | `stdio` or `http` |
+| `MCP_HOST` | `127.0.0.1` | Bind address (loopback by default) |
+| `PORT` / `MCP_PORT` | `8080` | Listen port |
+| `MCP_PATH` | `/mcp` | MCP endpoint path |
+| `MCP_AUTH_TOKENS` | — | JSON map of bearer token → `{ subject, email? }` |
+| `MCP_ALLOW_ANONYMOUS` | `false` | Map unauthenticated requests to the local identity (dev only) |
+
+Clients send `Authorization: Bearer <token>`. Requests without a valid token get `401` with `WWW-Authenticate`. `GET /healthz` is unauthenticated. Static tokens remain useful for trusted internal callers; end users should sign in through the OAuth flow below.
+
+### Per-user sign-in (OAuth)
+With `MCP_TOKEN_SIGNING_KEY` set, the server runs a per-user Google OAuth flow and issues its own short-lived bearer tokens. MCP clients never see Google credentials.
+
+1. Register `<MCP_PUBLIC_BASE_URL>/oauth/google/callback` as an authorized redirect URI in Google Cloud.
+2. Send the user to `GET /oauth/authorize` (optionally `?redirect_uri=...`).
+3. Google consent returns to `/oauth/google/callback`, which stores that user's refresh token under their Google `sub` and issues a server token.
+4. Use that token as `Authorization: Bearer <token>` on `/mcp`.
+
+The callback returns JSON when `Accept: application/json`, an HTML page otherwise, or redirects to `redirect_uri` with the token when one is supplied.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `MCP_PUBLIC_BASE_URL` | `http://<host>:<port>` | Base URL for the OAuth callback |
+| `MCP_TOKEN_SIGNING_KEY` | falls back to `GOOGLE_TOKEN_ENCRYPTION_KEY` | HMAC key for issued tokens |
+| `MCP_TOKEN_TTL_SECONDS` | `604800` (7 days) | Issued token lifetime |
+| `MCP_ALLOWED_REDIRECTS` | — | Comma-separated redirect URI prefixes allowed after sign-in (open-redirect guard) |
+
+### Operations
+- `POST /oauth/logout` with a bearer token revokes that user's issued tokens, closes their sessions, revokes the Google grant (best effort) and deletes the stored refresh token.
+- Per-user rate limiting: `MCP_RATE_LIMIT_PER_MINUTE` (default `120`, `0` disables) returns `429` with `Retry-After`.
+- Concurrent session cap: `MCP_MAX_SESSIONS_PER_USER` (default `10`, `0` disables).
+- `GET /healthz` reports uptime, active sessions, requests, unauthorized attempts, rate-limited requests and errors.
+- Logs are redacted: bearer tokens, `mcp1.*` tokens, and OAuth credential fields are replaced with `[redacted]`.
+
 ---
 
 ## 🚀 Quick Start

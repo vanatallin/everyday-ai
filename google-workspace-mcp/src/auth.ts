@@ -12,6 +12,8 @@ import { URL } from "url";
 
 import { config } from "./config.js";
 import { logger } from "./logger.js";
+import { getTokenStore } from "./token-store.js";
+import { type UserIdentity, LOCAL_IDENTITY } from "./identity.js";
 import type {
   ServiceAccountCredentials,
   OAuthCredentials,
@@ -52,52 +54,38 @@ async function authenticateServiceAccount(
 }
 
 /**
- * Load saved OAuth token if exists
+ * Load a saved OAuth token for a subject from the per-user token store.
  */
-function loadSavedToken(): SavedToken | null {
+async function loadSavedToken(subject: string): Promise<SavedToken | null> {
   try {
-    if (fs.existsSync(config.tokenPath)) {
-      const content = fs.readFileSync(config.tokenPath, "utf-8");
-      return JSON.parse(content) as SavedToken;
-    }
+    return await getTokenStore().get(subject);
   } catch (err) {
     logger.error("Error loading saved token", err);
+    return null;
   }
-  return null;
 }
 
 /**
- * Save OAuth credentials to disk
+ * Save OAuth credentials for a subject.
  */
-function saveCredentials(client: OAuth2Client, credentials: OAuthCredentials): void {
-  const tempPath = `${config.tokenPath}.${crypto.randomBytes(8).toString("hex")}.tmp`;
-  let createdTemp = false;
-  try {
-    const key = "installed" in credentials ? credentials.installed : credentials.web;
-    if (!key || !client.credentials.refresh_token) {
-      throw new Error("Google did not return a refresh token; existing credentials were not changed. Retry OAuth consent.");
-    }
-
-    const payload: SavedToken = {
-      type: "authorized_user",
-      client_id: key.client_id,
-      client_secret: key.client_secret,
-      refresh_token: client.credentials.refresh_token,
-    };
-    const fd = fs.openSync(tempPath, "wx", 0o600);
-    createdTemp = true;
-    try {
-      fs.writeFileSync(fd, JSON.stringify(payload, null, 2));
-    } finally {
-      fs.closeSync(fd);
-    }
-    fs.renameSync(tempPath, config.tokenPath);
-    createdTemp = false;
-    logger.info("OAuth credentials saved successfully");
-  } catch (err) {
-    if (createdTemp && fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
-    throw err;
+async function saveCredentials(
+  client: OAuth2Client,
+  credentials: OAuthCredentials,
+  subject: string
+): Promise<void> {
+  const key = "installed" in credentials ? credentials.installed : credentials.web;
+  if (!key || !client.credentials.refresh_token) {
+    throw new Error("Google did not return a refresh token; existing credentials were not changed. Retry OAuth consent.");
   }
+
+  const payload: SavedToken = {
+    type: "authorized_user",
+    client_id: key.client_id,
+    client_secret: key.client_secret,
+    refresh_token: client.credentials.refresh_token,
+  };
+  await getTokenStore().set(subject, payload);
+  logger.info(`OAuth credentials saved for subject "${subject}"`);
 }
 
 /**
@@ -106,6 +94,7 @@ function saveCredentials(client: OAuth2Client, credentials: OAuthCredentials): v
 function startLocalServer(
   oauth2Client: OAuth2Client,
   credentials: OAuthCredentials,
+  subject: string,
   expectedState: string,
   codeVerifier: string,
   resolve: (value: GoogleAuth) => void,
@@ -141,7 +130,7 @@ function startLocalServer(
           codeVerifier: codeVerifier,
         });
         oauth2Client.setCredentials(tokens);
-        saveCredentials(oauth2Client, credentials);
+        await saveCredentials(oauth2Client, credentials, subject);
 
         res.writeHead(200, { "Content-Type": "text/html" });
         res.end(`
@@ -175,13 +164,21 @@ function startLocalServer(
 /**
  * Authenticate using OAuth2
  */
-async function authenticateOAuth(credentials: OAuthCredentials, force = false): Promise<GoogleAuth> {
+async function authenticateOAuth(
+  credentials: OAuthCredentials,
+  identity: UserIdentity,
+  force = false
+): Promise<GoogleAuth> {
+  const subject = identity.subject;
+
   // Check for existing token
-  const savedToken = loadSavedToken();
-  if (savedToken && !force) {
-    logger.debug("Using saved OAuth token");
-    const auth = google.auth.fromJSON(savedToken);
-    return auth as GoogleAuth;
+  if (!force) {
+    const savedToken = await loadSavedToken(subject);
+    if (savedToken) {
+      logger.debug(`Using saved OAuth token for subject "${subject}"`);
+      const auth = google.auth.fromJSON(savedToken);
+      return auth as GoogleAuth;
+    }
   }
 
   const key = "installed" in credentials ? credentials.installed : credentials.web;
@@ -223,7 +220,7 @@ async function authenticateOAuth(credentials: OAuthCredentials, force = false): 
 
   // Start local server and wait for callback
   return new Promise((resolve, reject) => {
-    const server = startLocalServer(oauth2Client, credentials, state, codeVerifier, resolve, reject);
+    const server = startLocalServer(oauth2Client, credentials, subject, state, codeVerifier, resolve, reject);
     server.listen(config.oauthPort, () => {
       logger.info(`OAuth callback server listening on port ${config.oauthPort}`);
     });
@@ -234,7 +231,22 @@ async function authenticateOAuth(credentials: OAuthCredentials, force = false): 
  * Main authentication function
  * Automatically detects credential type and authenticates accordingly
  */
-export async function authenticate(options: { force?: boolean } = {}): Promise<GoogleAuth> {
+export async function authenticate(
+  options: { force?: boolean; identity?: UserIdentity } = {}
+): Promise<GoogleAuth> {
+  const identity = options.identity ?? LOCAL_IDENTITY;
+
+  // Non-local identities are authenticated by the transport/OAuth flow and
+  // only ever read their own token entry. They do not touch the local
+  // credentials file.
+  if (identity.source !== "local") {
+    const savedToken = await loadSavedToken(identity.subject);
+    if (!savedToken) {
+      throw new Error("NOT_AUTHENTICATED");
+    }
+    return google.auth.fromJSON(savedToken) as GoogleAuth;
+  }
+
   // Check for credentials file
   if (!fs.existsSync(config.credentialsPath)) {
     throw new Error(
@@ -258,14 +270,20 @@ export async function authenticate(options: { force?: boolean } = {}): Promise<G
     return authenticateServiceAccount(credentials as ServiceAccountCredentials);
   } else {
     logger.info("Using OAuth2 authentication");
-    return authenticateOAuth(credentials as OAuthCredentials, options.force);
+    return authenticateOAuth(credentials as OAuthCredentials, identity, options.force);
   }
 }
 
 /**
- * Check if authenticated
+ * Check if a subject is authenticated.
  */
-export function isAuthenticated(): boolean {
+export async function isAuthenticated(
+  identity: UserIdentity = LOCAL_IDENTITY
+): Promise<boolean> {
+  if (identity.source !== "local") {
+    return (await loadSavedToken(identity.subject)) !== null;
+  }
+
   if (!fs.existsSync(config.credentialsPath)) {
     return false;
   }
@@ -277,19 +295,27 @@ export function isAuthenticated(): boolean {
     if (credType === "service_account") {
       // Service accounts are always "authenticated" if credentials exist
       return true;
-    } else {
-      // OAuth requires a saved token
-      return fs.existsSync(config.tokenPath);
     }
+
+    // OAuth requires a saved token
+    return (await loadSavedToken(identity.subject)) !== null;
   } catch {
     return false;
   }
 }
 
 /**
- * Get auth status message
+ * Get auth status message for a subject.
  */
-export function getAuthStatus(): string {
+export async function getAuthStatus(
+  identity: UserIdentity = LOCAL_IDENTITY
+): Promise<string> {
+  if (identity.source !== "local") {
+    return (await isAuthenticated(identity))
+      ? `✅ Authenticated as ${identity.email ?? identity.subject}`
+      : "⚠️ Not authenticated. Complete the OAuth flow and retry.";
+  }
+
   if (!fs.existsSync(config.credentialsPath)) {
     return "❌ No credentials found. Please add credentials.json to the project root.";
   }
@@ -301,7 +327,7 @@ export function getAuthStatus(): string {
     if (credType === "service_account") {
       const serviceAccount = credentials as ServiceAccountCredentials;
       return `✅ Service Account configured: ${serviceAccount.client_email}`;
-    } else if (fs.existsSync(config.tokenPath)) {
+    } else if (await isAuthenticated(identity)) {
       return "✅ Authenticated with Google (OAuth)";
     } else {
       return "⚠️ OAuth credentials found but not authenticated. Use the 'authenticate' tool to sign in.";
