@@ -18,8 +18,10 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 
 import { logger } from "./logger.js";
-import { tools, handleToolCall } from "./tools/index.js";
+import { handleToolCall } from "./tools/index.js";
 import { createErrorResponse } from "./utils.js";
+import { config } from "./config.js";
+import { ToolCatalog, handleMetaTool, isMetaTool } from "./discovery.js";
 
 // Server metadata
 const SERVER_NAME = "google-service";
@@ -29,6 +31,8 @@ const SERVER_VERSION = "1.0.0";
  * Create and configure the MCP server
  */
 function createServer(): Server {
+  const catalog = new ToolCatalog(config.discoveryMode);
+
   const server = new Server(
     {
       name: SERVER_NAME,
@@ -43,8 +47,8 @@ function createServer(): Server {
 
   // Handle list tools request
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    logger.debug("Listing available tools");
-    return { tools };
+    logger.debug(`Listing available tools (discovery: ${catalog.mode})`);
+    return { tools: catalog.list() };
   });
 
   // Handle tool calls
@@ -52,6 +56,10 @@ function createServer(): Server {
     const { name, arguments: args } = request.params;
 
     try {
+      const metaResult = await handleMetaTool(name, args, catalog);
+      if (metaResult !== null) {
+        return metaResult;
+      }
       return await handleToolCall(name, args);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

@@ -147,6 +147,18 @@ A browser window will open for Google sign-in. After authorizing, a `token.json`
 
 > ⚠️ **Note**: `token.json` contains your personal authorization. Never share or commit it!
 
+### Token security
+
+Tokens are encrypted at rest with AES-256-GCM. The key is resolved in this order:
+
+1. `GOOGLE_TOKEN_ENCRYPTION_KEY` — explicit key, always wins.
+2. OS keychain — macOS Keychain, Linux Secret Service (`secret-tool`), Windows DPAPI.
+3. A private `token.json.key` file with `0600` permissions (headless servers, containers, CI).
+
+Existing plaintext `token.json` files are read transparently and rewritten encrypted on first use, so you do not need to re-authenticate. Token files are written atomically with `0600` permissions; a corrupt or undecryptable token is treated as unauthenticated instead of crashing the server.
+
+To request fewer permissions, set `GOOGLE_SCOPES` to a comma-separated list of scope URLs (for example `https://www.googleapis.com/auth/drive.readonly`). The default set is the full functionality set.
+
 ### Using multiple Google accounts
 
 Each server process has exactly one identity, so run one entry per account with its own token file. The OAuth **client** (`credentials.json`) is shared; only the token path differs.
@@ -525,13 +537,37 @@ echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"append_to_
 |----------|-------------|---------|
 | `GOOGLE_CREDENTIALS_PATH` | Path to credentials.json | `./credentials.json` |
 | `GOOGLE_TOKEN_PATH` | Path to token.json | `./token.json` |
+| `GOOGLE_TOKEN_ENCRYPTION_KEY` | Key for encrypting the token at rest (otherwise resolved from the OS keychain) | — |
+| `GOOGLE_SCOPES` | Comma-separated OAuth scopes for least-privilege access | full feature set |
+| `MCP_DISCOVERY` | Tool discovery: `full`, `lazy`, or `zero-cost` | `full` |
 | `OAUTH_PORT` | OAuth callback port | `3000` |
 | `LOG_LEVEL` | Logging level (DEBUG, INFO, WARN, ERROR) | `INFO` |
+
+### Tool discovery
+
+Advertising all 49 schemas on every connect costs context. `MCP_DISCOVERY` controls what `tools/list` returns:
+
+| Mode | Advertised tools | Use when |
+|------|------------------|----------|
+| `full` (default) | All 49 tools | The client handles a large tool list well |
+| `lazy` | 4 meta-tools + tools loaded with `workspace_discover` | You want to load only what a task needs |
+| `zero-cost` | 4 meta-tools only | Minimum startup context; invoke anything via `workspace_call` |
+
+The meta-tools are:
+
+- `workspace_list_tools` — compact name/description list with an optional `query` filter
+- `workspace_tool_help` — full description and input schema for one or more tools
+- `workspace_discover` — load tools into the advertised list (`lazy` mode)
+- `workspace_call` — run any tool by name with its arguments
+
+Discovery state is per server session. All calls still go through the normal schema validation, authentication and caching path.
 
 ### Example with Custom Config
 
 ```bash
 GOOGLE_CREDENTIALS_PATH=/custom/path/credentials.json \
+MCP_DISCOVERY=lazy \
+GOOGLE_SCOPES=https://www.googleapis.com/auth/drive.readonly \
 OAUTH_PORT=8080 \
 LOG_LEVEL=DEBUG \
 node dist/index.js

@@ -8,6 +8,8 @@ dist/
 credentials.json
 token.json
 token-*.json
+token*.key
+tokens/
 
 # IDE
 .vscode/

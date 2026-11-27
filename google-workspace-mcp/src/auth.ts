@@ -12,12 +12,23 @@ import { URL } from "url";
 
 import { config } from "./config.js";
 import { logger } from "./logger.js";
+import { TokenFile } from "./token-file.js";
 import type {
   ServiceAccountCredentials,
   OAuthCredentials,
   SavedToken,
   GoogleAuth,
 } from "./types.js";
+
+let tokenFile: TokenFile | null = null;
+
+/** Token storage is encrypted at rest via the cross-platform secret store. */
+function getTokenFile(): TokenFile {
+  if (!tokenFile) {
+    tokenFile = new TokenFile(config.tokenPath);
+  }
+  return tokenFile;
+}
 
 /**
  * Detect credential type from file content
@@ -52,52 +63,34 @@ async function authenticateServiceAccount(
 }
 
 /**
- * Load saved OAuth token if exists
+ * Load saved OAuth token if exists (decrypting it when necessary).
  */
 function loadSavedToken(): SavedToken | null {
   try {
-    if (fs.existsSync(config.tokenPath)) {
-      const content = fs.readFileSync(config.tokenPath, "utf-8");
-      return JSON.parse(content) as SavedToken;
-    }
+    return getTokenFile().read();
   } catch (err) {
     logger.error("Error loading saved token", err);
+    return null;
   }
-  return null;
 }
 
 /**
- * Save OAuth credentials to disk
+ * Save OAuth credentials to disk, encrypted at rest.
  */
 function saveCredentials(client: OAuth2Client, credentials: OAuthCredentials): void {
-  const tempPath = `${config.tokenPath}.${crypto.randomBytes(8).toString("hex")}.tmp`;
-  let createdTemp = false;
-  try {
-    const key = "installed" in credentials ? credentials.installed : credentials.web;
-    if (!key || !client.credentials.refresh_token) {
-      throw new Error("Google did not return a refresh token; existing credentials were not changed. Retry OAuth consent.");
-    }
-
-    const payload: SavedToken = {
-      type: "authorized_user",
-      client_id: key.client_id,
-      client_secret: key.client_secret,
-      refresh_token: client.credentials.refresh_token,
-    };
-    const fd = fs.openSync(tempPath, "wx", 0o600);
-    createdTemp = true;
-    try {
-      fs.writeFileSync(fd, JSON.stringify(payload, null, 2));
-    } finally {
-      fs.closeSync(fd);
-    }
-    fs.renameSync(tempPath, config.tokenPath);
-    createdTemp = false;
-    logger.info("OAuth credentials saved successfully");
-  } catch (err) {
-    if (createdTemp && fs.existsSync(tempPath)) fs.unlinkSync(tempPath);
-    throw err;
+  const key = "installed" in credentials ? credentials.installed : credentials.web;
+  if (!key || !client.credentials.refresh_token) {
+    throw new Error("Google did not return a refresh token; existing credentials were not changed. Retry OAuth consent.");
   }
+
+  const payload: SavedToken = {
+    type: "authorized_user",
+    client_id: key.client_id,
+    client_secret: key.client_secret,
+    refresh_token: client.credentials.refresh_token,
+  };
+  getTokenFile().write(payload);
+  logger.info("OAuth credentials saved successfully");
 }
 
 /**
