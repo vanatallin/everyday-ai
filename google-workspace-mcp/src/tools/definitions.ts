@@ -533,7 +533,7 @@ export const tools: Tool[] = [
   {
     name: "get_doc",
     description:
-      "Get the content of a Google Doc. Returns text content with tables formatted as markdown tables. Comments are excluded by default; set include_comments to append a compact summary, or use list_comments for the full thread.",
+      "Get the content of a Google Doc. Returns text content with tables formatted as markdown tables, paginated by characters with an explicit cursor. Comments are excluded by default; set include_comments for a compact summary, or use list_comments for the full thread.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -543,7 +543,15 @@ export const tools: Tool[] = [
         },
         include_comments: {
           type: "boolean",
-          description: "Append a compact comment summary to the output (default: false)",
+          description: "Append a compact comment summary to the first page (default: false)",
+        },
+        max_chars: {
+          type: "number",
+          description: "Maximum characters to return, 500-200000 (default: 20000)",
+        },
+        cursor: {
+          type: "string",
+          description: "Character offset from the previous response to continue reading",
         },
       },
       required: ["document_id"],
@@ -654,7 +662,7 @@ export const tools: Tool[] = [
   {
     name: "get_presentation",
     description:
-      "Get the content of a Google Slides presentation. Returns slide text, speaker notes, and optionally downloads images for visual analysis.",
+      "Get the content of a Google Slides presentation. Returns slide text, speaker notes, and optionally downloads images for visual analysis. Slides are paginated with slide_start/max_slides and an explicit continuation footer.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -664,7 +672,15 @@ export const tools: Tool[] = [
         },
         include_images: {
           type: "boolean",
-          description: "If true, downloads and includes base64-encoded image data for visual analysis (default: false). Note: This increases response size significantly.",
+          description: "If true, downloads and includes base64-encoded image data for the requested slides (default: false).",
+        },
+        slide_start: {
+          type: "number",
+          description: "First slide to return, 1-based (default: 1)",
+        },
+        max_slides: {
+          type: "number",
+          description: "Maximum slides to return, 1-100 (default: 10)",
         },
       },
       required: ["presentation_id"],
@@ -677,8 +693,19 @@ export const tools: Tool[] = [
   },
   {
     name: "inspect_presentation",
-    description: "Inspect slide, layout, master and element IDs, placeholders, positions, sizes, text, styles and revision before editing. Use a layout id with add_slide layout_id to inherit a master. Coordinates are in the units returned by Google; 1 point = 12,700 EMU.",
-    inputSchema: { type: "object", properties: { presentation_id: id }, required: ["presentation_id"] },
+    description: "Inspect slide and element IDs, placeholders, text and revision before editing. Defaults to a compact summary that keeps every ID needed for edits; set detail=full for raw element JSON, and include_layouts/include_masters for layout and master data. Paginated by slide with slide_start/max_slides.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        presentation_id: id,
+        slide_start: { type: "number", description: "First slide to return, 1-based (default: 1)" },
+        max_slides: { type: "number", description: "Maximum slides to return, 1-100 (default: 10)" },
+        detail: { type: "string", enum: ["summary", "full"], description: "summary keeps IDs, element types and text previews; full returns raw element JSON (default: summary)" },
+        include_layouts: { type: "boolean", description: "Include layout details (default: false)" },
+        include_masters: { type: "boolean", description: "Include master details (default: false)" },
+      },
+      required: ["presentation_id"],
+    },
   },
   {
     name: "edit_presentation",
@@ -760,7 +787,7 @@ export const tools: Tool[] = [
   {
     name: "get_sheet_data",
     description:
-      "Read cell values from a Google Sheets spreadsheet. Supports A1 notation for ranges.",
+      "Read cell values from a Google Sheets spreadsheet using A1 notation. Rows are paginated with start_row/max_rows and an explicit continuation footer; the header row is repeated on continuation pages.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -771,6 +798,14 @@ export const tools: Tool[] = [
         range: {
           type: "string",
           description: "The range to read in A1 notation (e.g., 'Sheet1!A1:D10', 'A1:D10', or 'Sheet1')",
+        },
+        start_row: {
+          type: "number",
+          description: "Zero-based row offset to start from, including the header at 0 (default: 0)",
+        },
+        max_rows: {
+          type: "number",
+          description: "Maximum rows to return, 1-1000 (default: 200)",
         },
       },
       required: ["spreadsheet_id", "range"],
@@ -875,6 +910,11 @@ export const tools: Tool[] = [
           type: "string",
           description:
             "Pagination token from a previous list_comments call (Drive fallback files only)",
+        },
+        detail: {
+          type: "string",
+          enum: ["compact", "full"],
+          description: "compact truncates bodies and shows 3 replies per thread; full returns everything (default: compact)",
         },
       },
       required: ["file_id"],

@@ -132,8 +132,16 @@ function mapNativeThread(thread: NativeThread): FileComment {
  * Bodies and quotes are truncated so a long thread cannot monopolise context;
  * callers can page with `page_token` when they need the rest.
  */
-export function formatComments(fileId: string, result: ListCommentsResult): string {
+export function formatComments(
+  fileId: string,
+  result: ListCommentsResult,
+  options: { full?: boolean } = {}
+): string {
   const { comments, nextPageToken } = result;
+  const full = options.full === true;
+  const contentLimit = full ? Number.MAX_SAFE_INTEGER : MAX_CONTENT_CHARS;
+  const quotedLimit = full ? Number.MAX_SAFE_INTEGER : MAX_QUOTED_CHARS;
+  const repliesShown = full ? Number.MAX_SAFE_INTEGER : MAX_REPLIES_SHOWN;
 
   if (comments.length === 0) {
     return nextPageToken
@@ -151,17 +159,17 @@ export function formatComments(fileId: string, result: ListCommentsResult): stri
     ];
 
     if (comment.quotedText) {
-      lines.push(`  > "${truncate(comment.quotedText, MAX_QUOTED_CHARS)}"`);
+      lines.push(`  > "${truncate(comment.quotedText, quotedLimit)}"`);
     }
 
-    lines.push(`  ${truncate(comment.content, MAX_CONTENT_CHARS)}`);
+    lines.push(`  ${truncate(comment.content, contentLimit)}`);
 
     const replies = comment.replies.filter((r) => !r.action);
-    for (const reply of replies.slice(0, MAX_REPLIES_SHOWN)) {
-      lines.push(`  - **${reply.author}**: ${truncate(reply.content, MAX_CONTENT_CHARS)}`);
+    for (const reply of replies.slice(0, repliesShown)) {
+      lines.push(`  - **${reply.author}**: ${truncate(reply.content, contentLimit)}`);
     }
-    if (replies.length > MAX_REPLIES_SHOWN) {
-      const hidden = replies.length - MAX_REPLIES_SHOWN;
+    if (replies.length > repliesShown) {
+      const hidden = replies.length - repliesShown;
       lines.push(`  - …${hidden} more repl${hidden === 1 ? "y" : "ies"}`);
     }
 

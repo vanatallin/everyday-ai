@@ -59,6 +59,13 @@ Anchor a new comment with:
 
 `get_doc` no longer embeds comments by default — pass `include_comments: true` for a compact summary.
 
+### Context-friendly reads
+- Unbounded reads are paginated with an explicit cursor: `get_doc` (`max_chars`/`cursor`), `get_presentation` (`slide_start`/`max_slides`), `inspect_presentation` (`slide_start`/`max_slides`), `get_sheet_data` (`start_row`/`max_rows`).
+- Continuation footers name the exact parameter to send next, so results are never silently truncated. `get_sheet_data` repeats the header row on continuation pages.
+- Heavy payloads are opt-in: `include_comments`, `include_images`, `inspect_presentation` `detail: "full"` / `include_layouts` / `include_masters`, and `list_comments` `detail: "full"`.
+- `inspect_presentation` defaults to a compact summary that keeps every ID needed for edits and drops style/transform blobs.
+- JSON responses are compact rather than pretty-printed.
+
 ---
 
 ## 🚀 Quick Start
@@ -373,7 +380,7 @@ gmcp-status      # Check auth status
 |------|-------------|---------------|
 | `list_docs` | List recent Google Docs | `limit?` |
 | `search_docs` | Search documents by name | `query`, `limit?` |
-| `get_doc` | Get document content as text (comments opt-in) | `document_id`, `include_comments?` |
+| `get_doc` | Get document content as text (comments opt-in, paginated) | `document_id`, `include_comments?`, `max_chars?`, `cursor?` |
 | `create_doc` | Create new Google Doc | `title`, `content?` |
 | `append_to_doc` | Append text to document | `document_id`, `text` |
 | `replace_in_doc` | Find and replace text | `document_id`, `search_text`, `replace_text`, `match_case?` |
@@ -381,7 +388,7 @@ gmcp-status      # Check auth status
 ### Comments (Docs, Slides, Sheets)
 | Tool | Description | Required Args |
 |------|-------------|---------------|
-| `list_comments` | List comments with pagination and status filter | `file_id`, `status?`, `max_comments?`, `page_token?` |
+| `list_comments` | List comments with pagination and status filter | `file_id`, `status?`, `max_comments?`, `page_token?`, `detail?` |
 | `manage_comment` | Create, reply, update, resolve, reopen or delete | `file_id`, `action`, `comment_id?`, `content?` |
 
 `manage_comment` actions: `create`, `reply`, `update`, `resolve`, `reopen`, `delete`. Anchors are native: `quoted_text`, `start_index`/`end_index`, `object_id`, `table_cell` or `cell`, depending on the file type (see the Comments features section above). `update` edits the head post by default; pass `post_id` to edit a specific reply. Files that are not Google Docs/Slides/Sheets fall back to Drive comments, which cannot be anchored inside editor files.

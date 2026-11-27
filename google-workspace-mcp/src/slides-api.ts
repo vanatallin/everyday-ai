@@ -894,7 +894,7 @@ export class GoogleSlidesService {
    */
   async getPresentation(
     presentationId: string,
-    options: { includeImageData?: boolean } = {}
+    options: { includeImageData?: boolean; slideNumbers?: number[] } = {}
   ): Promise<PresentationContent> {
     try {
       logger.debug(`Getting presentation: ${presentationId}`);
@@ -912,8 +912,12 @@ export class GoogleSlidesService {
         const slide = slides[index];
         const content = this.extractAllContent(slide);
 
-        // Download image data if requested
-        if (options.includeImageData && content.images.length > 0) {
+        // Download image data if requested. Page-limited reads only fetch
+        // images for the requested window so pagination actually saves work.
+        const inWindow =
+          !options.slideNumbers || options.slideNumbers.includes(index + 1);
+
+        if (options.includeImageData && inWindow && content.images.length > 0) {
           for (const image of content.images) {
             if (image.contentUrl) {
               const imageData = await this.downloadImage(image.contentUrl);
@@ -1235,4 +1239,64 @@ function guessMimeType(filePath: string): string {
  */
 export function getPresentationUrl(presentationId: string): string {
   return `https://docs.google.com/presentation/d/${presentationId}/edit`;
+}
+
+// ---------------------------------------------------------------------------
+// Inspection summaries
+//
+// `inspect_presentation` returns raw element JSON, which is dominated by text
+// styles and border tables. The summary keeps the fields needed to plan an
+// edit — IDs, element types, shape types and text previews — and drops the
+// rest. Callers can request `detail: "full"` when they need everything.
+// ---------------------------------------------------------------------------
+
+function textFromTextContent(content: any): string {
+  return (content?.textElements || [])
+    .map((element: any) => element.textRun?.content || "")
+    .join("");
+}
+
+export function summarizeInspectionElement(element: any): unknown {
+  const type = element.shape
+    ? "shape"
+    : element.image
+      ? "image"
+      : element.table
+        ? "table"
+        : element.line
+          ? "line"
+          : element.video
+            ? "video"
+            : Array.isArray(element.group)
+              ? "group"
+              : "element";
+
+  const text = element.shape?.text
+    ? textFromTextContent(element.shape.text).replace(/\s+/g, " ").trim()
+    : "";
+
+  return {
+    id: element.id,
+    type,
+    ...(element.shape?.type ? { shape_type: element.shape.type } : {}),
+    ...(element.title ? { title: element.title } : {}),
+    ...(element.placeholder ? { placeholder: element.placeholder } : {}),
+    ...(text ? { text: text.length > 300 ? `${text.slice(0, 299)}…` : text } : {}),
+    ...(element.table
+      ? { table: { rows: element.table.rows, columns: element.table.columns } }
+      : {}),
+    ...(Array.isArray(element.group)
+      ? { children: element.group.map((child: any) => child.id) }
+      : {}),
+  };
+}
+
+export function summarizeInspectionSlide(slide: any): unknown {
+  return {
+    id: slide.id,
+    index: slide.index,
+    ...(slide.name ? { name: slide.name } : {}),
+    ...(slide.type ? { type: slide.type } : {}),
+    elements: (slide.elements || []).map(summarizeInspectionElement),
+  };
 }

@@ -135,6 +135,8 @@ export const SearchDocsSchema = z.object({
 export const GetDocSchema = z.object({
   document_id: z.string().min(1, "Document ID is required"),
   include_comments: z.boolean().optional().default(false),
+  max_chars: z.number().int().min(500).max(200000).optional().default(20000),
+  cursor: z.string().min(1).optional(),
 }).strict();
 
 /**
@@ -207,6 +209,8 @@ export const SearchPresentationsSchema = z.object({
 export const GetPresentationSchema = z.object({
   presentation_id: z.string().min(1, "Presentation ID is required"),
   include_images: z.boolean().optional().default(false),
+  slide_start: z.number().int().min(1).optional().default(1),
+  max_slides: z.number().int().min(1).max(100).optional().default(10),
 });
 
 const slideId = z.string().min(1);
@@ -298,7 +302,14 @@ export const CreatePresentationSchema = z.object({
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["width"], message: "Provide both width and height" });
   }
 });
-export const InspectPresentationSchema = z.object({ presentation_id: slideId });
+export const InspectPresentationSchema = z.object({
+  presentation_id: slideId,
+  slide_start: z.number().int().min(1).optional().default(1),
+  max_slides: z.number().int().min(1).max(100).optional().default(10),
+  detail: z.enum(["summary", "full"]).optional().default("summary"),
+  include_layouts: z.boolean().optional().default(false),
+  include_masters: z.boolean().optional().default(false),
+});
 export const SlidePreviewSchema = z.object({ presentation_id: slideId, slide_id: slideId });
 export const EditPresentationSchema = z.object({
   presentation_id: slideId,
@@ -411,6 +422,8 @@ export const GetSpreadsheetSchema = z.object({
 export const GetSheetDataSchema = z.object({
   spreadsheet_id: z.string().min(1, "Spreadsheet ID is required"),
   range: z.string().min(1, "Range is required (e.g., 'Sheet1!A1:D10' or 'A1:D10')"),
+  start_row: z.number().int().min(0).optional().default(0),
+  max_rows: z.number().int().min(1).max(1000).optional().default(200),
 });
 
 /**
@@ -450,6 +463,7 @@ export const ListCommentsSchema = z.object({
   include_deleted: z.boolean().optional().default(false),
   max_comments: z.number().int().min(1).max(200).optional().default(50),
   page_token: z.string().min(1).optional(),
+  detail: z.enum(["compact", "full"]).optional().default("compact"),
 }).strict();
 
 /**

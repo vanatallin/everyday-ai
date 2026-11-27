@@ -84,6 +84,9 @@ test('list_comments schema applies defaults and rejects unknown fields', () => {
   assert.equal(parsed.status, 'open');
   assert.equal(parsed.max_comments, 50);
   assert.equal(parsed.include_deleted, false);
+  assert.equal(parsed.detail, 'compact');
+  assert.equal(ListCommentsSchema.safeParse({ file_id: 'file-1', detail: 'full' }).success, true);
+  assert.equal(ListCommentsSchema.safeParse({ file_id: 'file-1', detail: 'verbose' }).success, false);
 
   assert.equal(ListCommentsSchema.safeParse({ file_id: 'file-1', status: 'resolved' }).success, true);
   assert.equal(ListCommentsSchema.safeParse({ file_id: 'file-1', status: 'pending' }).success, false);
@@ -179,6 +182,34 @@ test('formatComments renders a compact block with counts and truncation', () => 
   assert.ok(!out.includes('x'.repeat(401)));
   assert.ok(out.includes('…'));
   assert.doesNotMatch(out, /More comments available/);
+});
+
+test('formatComments full detail returns untruncated bodies and every reply', () => {
+  const longContent = 'z'.repeat(600);
+  const out = formatComments(
+    'file-1',
+    {
+      comments: [
+        comment({
+          id: 'c1',
+          content: longContent,
+          quotedText: 'q'.repeat(200),
+          replies: [1, 2, 3, 4].map((n) => ({
+            id: `r${n}`,
+            author: 'Ada',
+            content: `reply ${n}`,
+            createdTime: '2026-11-02T10:00:00Z',
+          })),
+        }),
+      ],
+    },
+    { full: true }
+  );
+
+  assert.ok(out.includes(longContent));
+  assert.ok(out.includes('q'.repeat(200)));
+  assert.doesNotMatch(out, /more repl/);
+  assert.match(out, /reply 4/);
 });
 
 test('formatComments advertises pagination and handles empty pages', () => {

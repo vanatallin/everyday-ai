@@ -8,9 +8,10 @@ import { GoogleMeetService } from "../meet-api.js";
 import { GmailService, getHeader, getMessageBody } from "../gmail-api.js";
 import { GoogleDocsService, getDocumentUrl } from "../docs-api.js";
 import { GoogleCommentsService, formatComments, describeAnchor, isAnchorEmpty } from "../comments-api.js";
-import { GoogleSlidesService, getPresentationUrl } from "../slides-api.js";
+import { GoogleSlidesService, getPresentationUrl, summarizeInspectionSlide } from "../slides-api.js";
 import { GoogleSheetsService, getSpreadsheetUrl } from "../sheets-api.js";
 import { logger } from "../logger.js";
+import { parseCursor, paginateText, textPageSuffix, windowSlice, windowSuffix } from "../pagination.js";
 import {
   formatDate,
   formatDuration,
@@ -793,13 +794,15 @@ export async function handleSearchDocs(args: unknown): Promise<ToolResponse> {
 
 export async function handleGetDoc(args: unknown): Promise<ToolResponse> {
   return withDocsAuth(async (service) => {
-    const { document_id, include_comments } = validateInput(GetDocSchema, args);
+    const { document_id, include_comments, max_chars, cursor } = validateInput(GetDocSchema, args);
+    const offset = parseCursor(cursor);
 
     // Comments are opt-in: fetching them for every read wastes context and an
-    // extra API call. list_comments is the richer, paginated path.
+    // extra API call. list_comments is the richer, paginated path. They are
+    // only fetched on the first page so later cursors stay stable.
     const [docWithTabs, comments] = await Promise.all([
       service.getDocumentWithTabs(document_id),
-      include_comments
+      include_comments && offset === 0
         ? service.getDocumentComments(document_id).catch(() => []) // Don't fail if comments can't be fetched
         : Promise.resolve([]),
     ]);
@@ -824,12 +827,14 @@ export async function handleGetDoc(args: unknown): Promise<ToolResponse> {
         ? `\n\n---\n\n${formatComments(document_id, { comments })}`
         : "";
 
+    const page = paginateText(content, offset, max_chars);
+
     return createSuccessResponse(
       `**Document: ${docWithTabs.title}**\n\n` +
         `- ID: \`${document_id}\`\n` +
         tabInfo +
         `- URL: ${getDocumentUrl(document_id)}\n\n` +
-        `---\n\n${content}${commentsSection}`
+        `---\n\n${page.text}${commentsSection}${textPageSuffix(page)}`
     );
   }) as Promise<ToolResponse>;
 }
@@ -887,21 +892,44 @@ export async function handleCreatePresentation(args: unknown): Promise<ToolRespo
   return withSlidesAuth(async (service) => {
     const { title, width, height } = validateInput(CreatePresentationSchema, args);
     const pageSize = width !== undefined && height !== undefined ? { width, height } : undefined;
-    return createSuccessResponse(JSON.stringify(await service.createPresentation(title, pageSize), null, 2));
+    return createSuccessResponse(JSON.stringify(await service.createPresentation(title, pageSize)));
   }) as Promise<ToolResponse>;
 }
 
 export async function handleInspectPresentation(args: unknown): Promise<ToolResponse> {
   return withSlidesAuth(async (service) => {
-    const { presentation_id } = validateInput(InspectPresentationSchema, args);
-    return createSuccessResponse(JSON.stringify(await service.inspectPresentation(presentation_id), null, 2));
+    const input = validateInput(InspectPresentationSchema, args);
+    const inspection = (await service.inspectPresentation(input.presentation_id)) as any;
+
+    const window = windowSlice(inspection.slides || [], input.slide_start - 1, input.max_slides);
+    const slides =
+      input.detail === "full"
+        ? window.items
+        : window.items.map((slide) => summarizeInspectionSlide(slide));
+
+    // Full element JSON, layouts and masters are opt-in: they dwarf the slide
+    // data and are only needed for layout-specific edits.
+    const result = {
+      id: inspection.id,
+      title: inspection.title,
+      revisionId: inspection.revisionId,
+      pageSize: inspection.pageSize,
+      detail: input.detail,
+      slides,
+      ...(input.include_layouts ? { layouts: inspection.layouts } : {}),
+      ...(input.include_masters ? { masters: inspection.masters } : {}),
+    };
+
+    return createSuccessResponse(
+      JSON.stringify(result) + windowSuffix(window, "slides", "slide_start")
+    );
   }) as Promise<ToolResponse>;
 }
 
 export async function handleEditPresentation(args: unknown): Promise<ToolResponse> {
   return withSlidesAuth(async (service) => {
     const { presentation_id, operations, revision_id } = validateInput(EditPresentationSchema, args);
-    return createSuccessResponse(JSON.stringify(await service.editPresentation(presentation_id, operations, revision_id), null, 2));
+    return createSuccessResponse(JSON.stringify(await service.editPresentation(presentation_id, operations, revision_id)));
   }) as Promise<ToolResponse>;
 }
 
@@ -916,21 +944,21 @@ export async function handleSlidePreview(args: unknown): Promise<ToolResponse> {
 export async function handleAddSlideImage(args: unknown): Promise<ToolResponse> {
   return withSlidesAuth(async (service) => {
     const input = validateInput(AddSlideImageSchema, args);
-    return createSuccessResponse(JSON.stringify(await service.addSlideImage(input), null, 2));
+    return createSuccessResponse(JSON.stringify(await service.addSlideImage(input)));
   }) as Promise<ToolResponse>;
 }
 
 export async function handleUploadDriveFile(args: unknown): Promise<ToolResponse> {
   return withSlidesAuth(async (service) => {
     const input = validateInput(UploadDriveFileSchema, args);
-    return createSuccessResponse(JSON.stringify(await service.uploadDriveFile(input), null, 2));
+    return createSuccessResponse(JSON.stringify(await service.uploadDriveFile(input)));
   }) as Promise<ToolResponse>;
 }
 
 export async function handleCopySlide(args: unknown): Promise<ToolResponse> {
   return withSlidesAuth(async (service) => {
     const input = validateInput(CopySlideSchema, args);
-    return createSuccessResponse(JSON.stringify(await service.copySlide(input), null, 2));
+    return createSuccessResponse(JSON.stringify(await service.copySlide(input)));
   }) as Promise<ToolResponse>;
 }
 
@@ -984,15 +1012,24 @@ export async function handleSearchPresentations(args: unknown): Promise<ToolResp
 
 export async function handleGetPresentation(args: unknown): Promise<ToolResponse> {
   return withSlidesAuth(async (service) => {
-    const { presentation_id, include_images } = validateInput(GetPresentationSchema, args);
+    const { presentation_id, include_images, slide_start, max_slides } = validateInput(
+      GetPresentationSchema,
+      args
+    );
+
+    // Only download image bytes for the requested window.
+    const requested = Array.from({ length: max_slides }, (_, i) => slide_start + i);
     const presentation = await service.getPresentation(presentation_id, {
       includeImageData: include_images,
+      slideNumbers: requested,
     });
+
+    const window = windowSlice(presentation.slides, slide_start - 1, max_slides);
 
     // Collect all image content blocks for MCP response
     const imageBlocks: Array<{ type: "image"; data: string; mimeType: string }> = [];
 
-    const slidesContent = presentation.slides
+    const slidesContent = window.items
       .map((slide) => {
         let content = `## Slide ${slide.slideNumber}\n\n`;
 
@@ -1076,7 +1113,8 @@ export async function handleGetPresentation(args: unknown): Promise<ToolResponse
       `- Slides: ${presentation.slideCount}\n` +
       mediaSummary +
       `- URL: ${getPresentationUrl(presentation.id)}\n\n` +
-      `---\n\n${slidesContent}`;
+      `---\n\n${slidesContent}` +
+      windowSuffix(window, "slides", "slide_start");
 
     // Return text content followed by image content blocks
     return {
@@ -1166,36 +1204,46 @@ export async function handleGetSpreadsheet(args: unknown): Promise<ToolResponse>
 
 export async function handleGetSheetData(args: unknown): Promise<ToolResponse> {
   return withSheetsAuth(async (service) => {
-    const { spreadsheet_id, range } = validateInput(GetSheetDataSchema, args);
+    const { spreadsheet_id, range, start_row, max_rows } = validateInput(GetSheetDataSchema, args);
     const data = await service.getSheetData(spreadsheet_id, range);
 
     if (data.values.length === 0) {
       return createSuccessResponse(`No data found in range: ${range}`);
     }
 
-    // Format as markdown table
-    let table = "";
-    if (data.values.length > 0) {
-      const maxCols = Math.max(...data.values.map((row) => row.length));
+    const window = windowSlice(data.values, start_row, max_rows);
+    const headerRow = data.values[0] || [];
+    const maxCols = Math.max(
+      headerRow.length,
+      ...window.items.map((row) => row.length)
+    );
 
-      // Header row
-      const headerRow = data.values[0] || [];
+    let table = "";
+
+    // When continuing past the first page, repeat the header once as context
+    // rather than re-printing it as a data row.
+    if (window.start > 0 && headerRow.length > 0) {
+      table += `Header: ${headerRow.join(" | ")}\n\n`;
+    }
+
+    const rowsToRender =
+      window.start === 0 ? window.items.slice(1) : window.items;
+
+    if (window.start === 0 && headerRow.length > 0) {
       table += "| " + headerRow.map((cell) => cell || "").join(" | ") + " |\n";
       table += "| " + Array(maxCols).fill("---").join(" | ") + " |\n";
+    }
 
-      // Data rows
-      for (let i = 1; i < data.values.length; i++) {
-        const row = data.values[i] || [];
-        // Pad row to match header columns
-        const paddedRow = Array(maxCols).fill("").map((_, j) => row[j] || "");
-        table += "| " + paddedRow.join(" | ") + " |\n";
-      }
+    for (const row of rowsToRender) {
+      const paddedRow = Array(maxCols).fill("").map((_, j) => row[j] || "");
+      table += "| " + paddedRow.join(" | ") + " |\n";
     }
 
     return createSuccessResponse(
       `**Sheet Data** (Range: ${data.range})\n\n` +
-        `Rows: ${data.values.length}, Columns: ${data.values[0]?.length || 0}\n\n` +
-        table
+        `Rows: ${data.values.length}, Columns: ${headerRow.length}\n\n` +
+        table +
+        windowSuffix(window, "rows", "start_row")
     );
   }) as Promise<ToolResponse>;
 }
@@ -1259,7 +1307,9 @@ export async function handleListComments(args: unknown): Promise<ToolResponse> {
       pageToken: params.page_token,
     });
 
-    return createSuccessResponse(formatComments(params.file_id, result));
+    return createSuccessResponse(
+      formatComments(params.file_id, result, { full: params.detail === "full" })
+    );
   }) as Promise<ToolResponse>;
 }
 
