@@ -147,6 +147,50 @@ A browser window will open for Google sign-in. After authorizing, a `token.json`
 
 > ⚠️ **Note**: `token.json` contains your personal authorization. Never share or commit it!
 
+### Using multiple Google accounts
+
+Each server process has exactly one identity, so run one entry per account with its own token file. The OAuth **client** (`credentials.json`) is shared; only the token path differs.
+
+Authenticate each account separately (use a different `OAUTH_PORT` per account):
+
+```bash
+GOOGLE_TOKEN_PATH=~/.google-mcp/work-token.json OAUTH_PORT=3000 \
+  node dist/index.js <<'EOF'
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"authenticate","arguments":{}}}
+EOF
+
+GOOGLE_TOKEN_PATH=~/.google-mcp/personal-token.json OAUTH_PORT=3001 \
+  node dist/index.js <<'EOF'
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"authenticate","arguments":{}}}
+EOF
+```
+
+Then register both in your MCP client:
+
+```json
+{
+  "mcpServers": {
+    "google-work": {
+      "command": "node",
+      "args": ["/absolute/path/to/google-workspace-mcp/dist/index.js"],
+      "env": { "GOOGLE_TOKEN_PATH": "/Users/you/.google-mcp/work-token.json" }
+    },
+    "google-personal": {
+      "command": "node",
+      "args": ["/absolute/path/to/google-workspace-mcp/dist/index.js"],
+      "env": { "GOOGLE_TOKEN_PATH": "/Users/you/.google-mcp/personal-token.json" }
+    }
+  }
+}
+```
+
+The client shows two tool sets (`google-work: get_doc`, `google-personal: get_doc`, …). Each entry is a separate process, so auth and caches are fully isolated.
+
+- Use absolute paths. Never point two entries at the same token file.
+- Desktop-app OAuth clients accept any `http://localhost:<port>` callback; web clients must register both redirect URIs.
+- Confirm which account an entry uses with the `gmail_profile` tool (it returns the email address).
+- Re-consent an account by repeating its command with `"arguments":{"force":true}`.
+
 ### Google Slides creation and editing
 
 The Slides tools can create presentations, inspect elements and revisions, add, duplicate, delete or reorder slides, add shapes, text, images and tables, change text and shape styling, set slide backgrounds, add speaker notes, links and alt text, reorder layers, copy slides between decks, and render slide previews. `edit_presentation` applies a batch atomically (operations that need element metadata are resolved first, then sent as one batch). Inspect first and pass its `revisionId` as `revision_id` to prevent overwriting concurrent edits. Slide positions use zero-based indices; the move index refers to the order before the move. Coordinates for edits are in points. Newly created IDs are returned in `createdIds`; duplicated IDs are returned in the API replies. Add content to newly created slides in a subsequent call.
